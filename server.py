@@ -913,7 +913,7 @@ def _format_node_for_llm(graph, node: dict, detail: bool = False) -> str:
 
 
 # ============================================================
-# OAG 模式 NL 查询（Object-Action-Graph：类型层查询，非实例图游走）
+# OAG 模式 NL 查询（Ontology Augmented Generation：类型层查询，非实例图游走）
 # ============================================================
 
 
@@ -992,7 +992,7 @@ async def api_nl_query_oag(req: dict):
 
 def _build_oag_system_prompt() -> str:
     schema = _build_llm_context()
-    return f"""你是一个 Ontology 对象查询助手。系统使用 Object-Action-Graph（OAG）模式，所有数据建模为业务对象（Student、Course、Score、Teacher），对象间通过 Link 关联。
+    return f"""你是一个 Ontology 对象查询助手。系统使用 Ontology Augmented Generation（OAG）模式：所有数据建模为业务对象（Student、Course、Score、Teacher），Ontology 提供 Data（对象+Link）、Logic（函数）、Action（写操作）三类能力来增强你的回答。
 
 ## 核心原则
 1. 你通过 **query_objects** 在类型层面声明查询意图，用属性过滤条件返回结果。不要遍历实例图。

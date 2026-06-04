@@ -78,7 +78,7 @@ Three NL query modes, representing different architectural approaches.
 
 ### OAG Mode `POST /ontology/nl-query-oag` (Recommended)
 
-**Object-Action-Graph (OAG) Mode**: The LLM declares query intent at the object type level, and the engine automatically compiles SQL JOINs based on Link definitions. **The LLM never touches instance data or traversal logic.**
+**Ontology Augmented Generation (OAG) Mode**: The LLM declares query intent at the object type level, and the engine automatically compiles SQL JOINs based on Link definitions. **The LLM never touches instance data or traversal logic.**
 
 This aligns with [Palantir AIP's OAG](https://www.palantir.com/docs/foundry/ontology/ontology-augmented-generation): the Ontology serves as a constraint system — the LLM only understands user intent and fills parameters, without orchestrating query execution paths.
 

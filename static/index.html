@@ -3,100 +3,311 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ontology Demo — 学生成绩管理系统</title>
+<title>Ontology Demo &mdash; Scholarly Observatory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Crimson+Text:ital,wght@0,400;0,600;0,700;1,400&family=DM+Mono:ital,wght@0,400;0,500;1,400&family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&display=swap" rel="stylesheet">
 <script src="/static/vis-network.min.js"></script>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+/* ============================================================
+   Scholarly Observatory — Light Edition
+   Inspired by academic journals & library reading rooms.
+   Palette: warm ivory · ink blue · vermillion · sage green
+   ============================================================ */
+:root {
+  --bg-page:     #f5f0e8;
+  --bg-surface:  #faf7f2;
+  --bg-raised:   #ffffff;
+  --border:      #e0d8cb;
+  --border-lit:  #c4b99a;
+  --ink:         #2c2416;
+  --ink-soft:    #5c5240;
+  --ink-muted:   #9b8f7a;
+  --accent:      #b8402a;
+  --accent-dim:  #8b2a1a;
+  --sage:        #4a7c6f;
+  --sage-dim:    #3a6257;
+  --node-student: #4a7c6f;
+  --node-teacher: #6b8c4a;
+  --node-course:  #c08030;
+  --node-score:   #c05050;
+  --node-iface:   #7050a0;
+  --radius: 3px;
+  --transition: 160ms ease;
+}
 
-.header { background: #1a1a2e; color: #fff; padding: 12px 24px; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 12px; }
-.header .badge { background: #e94560; font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+* { margin:0; padding:0; box-sizing:border-box; }
 
+body {
+  font-family: 'Inter', -apple-system, sans-serif;
+  background: var(--bg-page);
+  color: var(--ink);
+  height: 100vh;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- header ---- */
+.header {
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+  display: flex; align-items: center; gap: 12px;
+  flex-shrink: 0;
+}
+.header .wordmark {
+  font-family: 'Crimson Text', 'Palatino', serif;
+  font-size: 22px; font-weight: 600; color: var(--ink);
+}
+.header .wordmark em { font-style: normal; color: var(--accent); }
+.header .tagline {
+  font-family: 'DM Mono', monospace; font-size: 10px; color: var(--ink-muted);
+  letter-spacing: 0.08em; margin-top: 2px;
+}
+.header .meta-right {
+  margin-left: auto; font-size: 11px; color: var(--ink-soft);
+  font-family: 'DM Mono', monospace; letter-spacing: 0.04em;
+}
+.header .meta-right em { font-style: normal; color: var(--accent); }
+
+/* ---- main layout ---- */
 .main { display: flex; flex: 1; overflow: hidden; }
 
-/* ---- 左侧图谱 ---- */
-.graph-panel { flex: 1; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
-.graph-toolbar { padding: 8px 12px; border-bottom: 1px solid #eee; display: flex; gap: 6px; flex-wrap: wrap; }
-.graph-toolbar button { padding: 4px 12px; border: 1px solid #d9d9d9; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
-.graph-toolbar button:hover { border-color: #1890ff; color: #1890ff; }
-.graph-toolbar button.active { background: #1890ff; color: #fff; border-color: #1890ff; }
-#graph-container { flex: 1; min-height: 400px; border: 1px solid #f0f0f0; }
+/* ---- left: graph panel ---- */
+.graph-panel {
+  flex: 1; display: flex; flex-direction: column;
+  background: #fefdfb;
+  border-right: 1px solid var(--border);
+  min-width: 0;
+}
+.graph-toolbar {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex; gap: 2px; flex-wrap: wrap; align-items: center;
+  background: var(--bg-surface);
+}
+.graph-toolbar .sep { width:1px; background:var(--border); margin:0 10px; align-self:stretch; }
+.graph-toolbar button {
+  padding: 5px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500;
+  transition: all var(--transition);
+}
+.graph-toolbar button:hover { color: var(--ink); background: var(--bg-page); border-color: var(--border-lit); }
+.graph-toolbar button.active {
+  color: #fff; background: var(--ink); border-color: var(--ink);
+}
+.graph-toolbar .instance-only { display:none; }
+#graph-container { flex:1; min-height:400px; background:#fefdfb; }
 
-/* ---- 右侧面板 ---- */
-.right-panel { width: 420px; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 16px; }
+/* ---- right panel ---- */
+.right-panel {
+  width: 440px; display: flex; flex-direction: column; overflow-y: auto;
+  padding: 16px; gap: 12px;
+  background: var(--bg-surface);
+}
+.right-panel::-webkit-scrollbar { width:5px; }
+.right-panel::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:3px; }
 
-.nl-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.nl-section h3 { font-size: 14px; margin-bottom: 8px; color: #333; display: flex; align-items: center; justify-content: space-between; }
-.nl-input { display: flex; gap: 8px; }
-.nl-input input { flex: 1; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
-.nl-input button { padding: 8px 16px; background: #1890ff; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
-.nl-input button:hover { background: #1677cc; }
-.nl-input button:disabled { background: #bbb; cursor: not-allowed; }
-.nl-hints { font-size: 11px; color: #999; margin-top: 8px; }
+/* ---- section cards ---- */
+.section {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 18px 20px;
+}
+.section-title {
+  font-family: 'Crimson Text', serif; font-size: 16px; font-weight: 600;
+  color: var(--ink); margin-bottom: 12px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.section-title .count {
+  font-family: 'Inter', sans-serif; font-size: 11px; color: var(--ink-muted);
+  font-weight: 400;
+}
 
-.answer-box { background: #f6ffed; border: 1px solid #b7eb8f; border-radius: 6px; padding: 12px; font-size: 14px; margin-top: 8px; display: none; }
+/* ---- NL query ---- */
+.mode-toggle { display: inline-flex; gap: 1px; }
+.mode-btn {
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: 'Inter', sans-serif; font-size: 12px; font-weight: 500;
+  cursor: pointer; transition: all var(--transition);
+}
+.mode-btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.mode-btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+.mode-btn:hover { color: var(--ink); background: var(--bg-page); }
+.mode-btn.active {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
 
-.section-title { font-size: 13px; font-weight: 600; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+.nl-input-row { display: flex; gap: 8px; margin-top: 10px; }
+.nl-input-row input {
+  flex: 1;
+  padding: 10px 14px;
+  background: var(--bg-page);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--ink);
+  font-family: 'Inter', sans-serif; font-size: 14px;
+  outline: none;
+  transition: border var(--transition);
+}
+.nl-input-row input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(184,64,42,0.08); }
+.nl-input-row input::placeholder { color: var(--ink-muted); }
+.nl-input-row button {
+  padding: 10px 22px;
+  background: var(--ink); color: #fff;
+  border: none; border-radius: var(--radius);
+  font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 600;
+  cursor: pointer; letter-spacing: 0.02em;
+  transition: background var(--transition);
+}
+.nl-input-row button:hover { background: var(--accent); }
+.nl-input-row button:disabled { background: var(--ink-muted); cursor: not-allowed; }
 
-/* ---- 操作面板 ---- */
-.actions-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.action-card { border: 1px solid #f0f0f0; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
-.action-card h4 { font-size: 13px; margin-bottom: 8px; color: #333; }
-.action-card .fields { display: flex; flex-wrap: wrap; gap: 6px; }
-.action-card input { width: 100px; padding: 4px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 12px; }
-.action-card button { padding: 4px 14px; background: #52c41a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.action-card button:hover { background: #49aa19; }
+.nl-hints {
+  font-size: 12px; color: var(--ink-muted); margin-top: 8px;
+}
 
-/* ---- 结果区 ---- */
-.result-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); min-height: 100px; }
-.result-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.result-table th { background: #fafafa; padding: 6px 8px; text-align: left; border-bottom: 2px solid #f0f0f0; color: #666; }
-.result-table td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
-.badge-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
-.badge-pass { background: #f6ffed; color: #52c41a; }
-.badge-fail { background: #fff2f0; color: #ff4d4f; }
+.answer-box {
+  background: #faf5ee; border: 1px solid var(--border-lit); border-radius: var(--radius);
+  padding: 14px 16px; font-size: 14px; margin-top: 10px; display: none;
+  color: var(--ink); line-height: 1.7;
+}
 
-.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #f3f3f3; border-top: 2px solid #1890ff; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
-@keyframes spin { to { transform: rotate(360deg); } }
-
-/* ---- 模式切换 ---- */
-.mode-toggle { display: inline-flex; gap: 4px; margin-right: 8px; align-items: center; }
-.mode-btn { padding: 6px 12px; border: 1px solid #d9d9d9; border-radius: 6px; background: #fff; color: #666; font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
-.mode-btn:hover { border-color: #1890ff; color: #1890ff; }
-.mode-btn.active { background: #1890ff; border-color: #1890ff; color: #fff; }
-
-/* ---- 探索步骤日志 ---- */
-.exploration-log { margin-top: 8px; padding: 8px; background: #f9f9f9; border-radius: 6px; font-size: 11px; max-height: 200px; overflow-y: auto; }
-.exploration-step { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; animation: fadeIn 0.3s ease; }
+.exploration-log {
+  margin-top: 8px; padding: 12px;
+  background: var(--bg-page); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 11px; max-height: 220px; overflow-y: auto;
+}
+.exploration-step {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 6px 0; border-bottom: 1px solid var(--border);
+  animation: fadeStep 0.3s ease;
+}
 .exploration-step:last-child { border-bottom: none; }
-.exploration-step .step-num { background: #1890ff; color: #fff; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; flex-shrink: 0; }
-.exploration-step .step-info { flex: 1; }
-.exploration-step .step-tool { font-weight: 600; color: #333; }
-.exploration-step .step-input { color: #999; font-size: 10px; }
-.exploration-step .step-summary { color: #52c41a; font-size: 11px; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+.exploration-step .step-num {
+  background: var(--ink); color: #fff;
+  border-radius: 50%;
+  width: 20px; height: 20px; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; flex-shrink: 0;
+}
+.exploration-step .step-tool { font-weight: 600; color: var(--ink); }
+.exploration-step .step-input { color: var(--ink-muted); font-size: 10px; }
+.exploration-step .step-summary { color: var(--sage); font-size: 11px; }
+@keyframes fadeStep { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:translateY(0); } }
+
+/* ---- function cards ---- */
+.func-group-label {
+  font-family: 'Crimson Text', serif; font-size: 14px; font-weight: 600;
+  color: var(--ink-soft); margin: 12px 0 6px;
+}
+.func-card {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 14px; margin-bottom: 4px;
+  display: flex; align-items: center; justify-content: space-between;
+  transition: border-color var(--transition);
+}
+.func-card:hover { border-color: var(--border-lit); }
+.func-card .func-info { flex:1; }
+.func-card .func-name {
+  font-family: 'DM Mono', monospace; font-size: 12px; font-weight: 500; color: var(--ink);
+}
+.func-card .func-meta {
+  font-size: 11px; color: var(--ink-muted); margin-top: 2px;
+}
+.func-card .func-dot {
+  display:inline-block; width:5px; height:5px; border-radius:50%; margin-right:6px;
+}
+.func-card button {
+  padding: 4px 14px; border:1px solid var(--border); border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink-soft); font-family: 'Inter', sans-serif;
+  font-size: 11px; font-weight: 500; cursor: pointer;
+  transition: all var(--transition); flex-shrink:0;
+}
+.func-card button:hover { border-color: var(--sage); color: var(--sage); background: #f5faf7; }
+
+/* ---- action cards ---- */
+.action-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-end; }
+.action-row .field-group { flex:1; min-width:0; }
+.action-row label {
+  display: block; font-size: 10px; color: var(--ink-muted);
+  font-weight: 500; letter-spacing: 0.04em; margin-bottom: 4px;
+  font-family: 'DM Mono', monospace;
+}
+.action-row input {
+  width:100%; padding:6px 10px;
+  background: var(--bg-page); border:1px solid var(--border); border-radius: var(--radius);
+  color: var(--ink); font-family: 'Inter', sans-serif; font-size: 12px;
+  outline: none;
+}
+.action-row input:focus { border-color: var(--accent); }
+.action-btn {
+  padding: 6px 16px; border:none; border-radius: var(--radius);
+  font-family: 'Inter', sans-serif;
+  font-size: 11px; font-weight: 600; cursor: pointer;
+  transition: all var(--transition); white-space: nowrap; flex-shrink:0;
+}
+.action-btn.primary { background: var(--sage); color: #fff; }
+.action-btn.primary:hover { background: var(--sage-dim); }
+.action-btn.danger { background: var(--accent); color: #fff; }
+.action-btn.danger:hover { background: var(--accent-dim); }
+
+/* ---- result table ---- */
+.result-table { width:100%; border-collapse:collapse; font-size:12px; }
+.result-table th {
+  background: var(--bg-page); padding: 7px 12px; text-align: left;
+  border-bottom: 2px solid var(--border-lit); color: var(--ink-soft);
+  font-weight: 600; font-family: 'DM Mono', monospace; font-size: 10px;
+  letter-spacing:0.04em;
+}
+.result-table td {
+  padding: 6px 12px; border-bottom: 1px solid var(--border); color: var(--ink);
+}
+.badge-tag { display:inline-block; padding:2px 8px; border-radius:3px; font-size:10px; font-weight:600; }
+.badge-pass { background: #e8f0ec; color: var(--sage); }
+.badge-fail { background: #fce8e5; color: var(--accent); }
+
+.spinner {
+  display:inline-block; width:12px; height:12px;
+  border:2px solid var(--border); border-top:2px solid var(--ink);
+  border-radius:50%; animation:spin 0.6s linear infinite;
+  vertical-align:middle; margin-right:6px;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+
+.error-msg { color: var(--accent); font-size: 13px; }
+.success-msg { color: var(--sage); font-size: 13px; }
 </style>
 </head>
 <body>
 
 <div class="header">
-  Ontology Demo <span class="badge">语义层</span> 学生成绩管理系统
-  <span style="font-size:12px;color:#888;margin-left:auto;">Object · Link · Action · Function</span>
+  <div class="wordmark">Ontology <em>Demo</em></div>
+  <div class="tagline">Scholarly Observatory</div>
+  <div class="meta-right">Object &middot; Link &middot; Action &middot; Function &middot; <em>ObjectSet</em></div>
 </div>
 
 <div class="main">
-  <!-- 左侧：知识图谱 -->
+  <!-- 左侧 — 知识图谱 -->
   <div class="graph-panel">
     <div class="graph-toolbar">
-      <button id="btn-schema" class="active" onclick="switchView('schema')">类型视图</button>
-      <button id="btn-instance" onclick="switchView('instance')">实例视图</button>
-      <span style="margin: 0 8px; color: #ddd;">|</span>
-      <button id="btn-filter-all" class="instance-only active" onclick="filterGraph('all')" style="display:none">全部</button>
-      <button id="btn-filter-student" class="instance-only" onclick="filterGraph('Student')" style="color:#1890ff;display:none">● 学生</button>
-      <button id="btn-filter-teacher" class="instance-only" onclick="filterGraph('Teacher')" style="color:#52c41a;display:none">● 教师</button>
-      <button id="btn-filter-course" class="instance-only" onclick="filterGraph('Course')" style="color:#fa8c16;display:none">● 课程</button>
-      <button id="btn-filter-score" class="instance-only" onclick="filterGraph('Score')" style="color:#e94560;display:none">● 成绩</button>
-      <span class="instance-only" style="margin-left:8px;font-size:11px;color:#999;display:none">点击节点展开关系 · 滚轮缩放 · 拖拽移动</span>
+      <button id="btn-schema" class="active" onclick="switchView('schema')">Type View</button>
+      <button id="btn-instance" onclick="switchView('instance')">Instance View</button>
+      <span class="sep"></span>
+      <button id="btn-filter-all" class="instance-only active" onclick="filterGraph('all')">All</button>
+      <button id="btn-filter-student" class="instance-only" onclick="filterGraph('Student')" style="color:#4a7c6f">Student</button>
+      <button id="btn-filter-teacher" class="instance-only" onclick="filterGraph('Teacher')" style="color:#6b8c4a">Teacher</button>
+      <button id="btn-filter-course" class="instance-only" onclick="filterGraph('Course')" style="color:#c08030">Course</button>
+      <button id="btn-filter-score" class="instance-only" onclick="filterGraph('Score')" style="color:#c05050">Score</button>
     </div>
     <div id="graph-container"></div>
   </div>
@@ -104,75 +315,60 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
   <!-- 右侧面板 -->
   <div class="right-panel">
     <!-- 自然语言查询 -->
-    <div class="nl-section">
-      <h3>🔍 自然语言查询
+    <div class="section">
+      <div class="section-title">
+        Natural Language Query
         <span class="mode-toggle">
           <button id="btn-mode-oag" class="mode-btn active" onclick="switchNlMode('oag')">OAG</button>
-          <button id="btn-mode-graph" class="mode-btn" onclick="switchNlMode('graph')">图谱游走</button>
-          <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">批量规划</button>
+          <button id="btn-mode-graph" class="mode-btn" onclick="switchNlMode('graph')">Graph Walk</button>
+          <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">Batch</button>
         </span>
-      </h3>
-      <div class="nl-input">
-        <input id="nlInput" placeholder="例：张三高等数学多少分" onkeydown="if(event.key==='Enter')nlQuery()">
-        <button id="nlBtn" onclick="nlQuery()">查询</button>
       </div>
-      <div class="nl-hints">OAG（类型层查询）· 试试：张三高等数学多少分 · 优秀学生有哪些 · 张三的平均分</div>
+      <div class="nl-input-row">
+        <input id="nlInput" placeholder="张三高等数学多少分" onkeydown="if(event.key==='Enter')nlQuery()">
+        <button id="nlBtn" onclick="nlQuery()">Query</button>
+      </div>
+      <div class="nl-hints">Ontology Augmented Generation &middot; 试试：张三高等数学多少分 &middot; 优秀学生有哪些</div>
       <div id="answerBox" class="answer-box"></div>
       <div id="explorationLog" class="exploration-log" style="display:none;"></div>
     </div>
 
-    <!-- Functions 面板 -->
-    <div class="actions-section">
-      <div class="section-title">⚡ Functions <span style="font-weight:400;font-size:11px;color:#999;" id="func-count"></span></div>
+    <!-- Functions -->
+    <div class="section">
+      <div class="section-title">Functions <span class="count" id="func-count"></span></div>
       <div id="functions-list"></div>
     </div>
 
-    <!-- 操作面板 -->
-    <div class="actions-section">
-      <div class="section-title">⚡ Actions</div>
+    <!-- Actions -->
+    <div class="section">
+      <div class="section-title">Actions</div>
 
-      <div class="action-card">
-        <h4>录入成绩 (createScore)</h4>
-        <div class="fields">
-          <input id="cs_student" placeholder="学生ID">
-          <input id="cs_course" placeholder="课程ID">
-          <input id="cs_score" placeholder="分数">
-          <input id="cs_date" placeholder="日期(如2024-06-15)">
-          <button onclick="doAction('createScore')">执行</button>
-        </div>
+      <div class="action-row">
+        <div class="field-group"><label>Student ID</label><input id="cs_student" placeholder="1"></div>
+        <div class="field-group"><label>Course ID</label><input id="cs_course" placeholder="1"></div>
+        <div class="field-group"><label>Score</label><input id="cs_score" placeholder="95"></div>
+        <div class="field-group"><label>Exam Date</label><input id="cs_date" placeholder="2024-06-15"></div>
+        <button class="action-btn primary" onclick="doAction('createScore')">createScore</button>
       </div>
 
-      <div class="action-card">
-        <h4>修改成绩 (updateScore)</h4>
-        <div class="fields">
-          <input id="us_id" placeholder="成绩ID">
-          <input id="us_score" placeholder="新分数">
-          <button onclick="doAction('updateScore')">执行</button>
-        </div>
+      <div class="action-row">
+        <div class="field-group"><label>Score ID</label><input id="us_id" placeholder="1"></div>
+        <div class="field-group"><label>New Score</label><input id="us_score" placeholder="90"></div>
+        <button class="action-btn primary" onclick="doAction('updateScore')">updateScore</button>
       </div>
 
-      <div class="action-card" style="display:flex;gap:8px;">
-        <div style="flex:1">
-          <h4>分配教师 (assignTeacher)</h4>
-          <div class="fields">
-            <input id="at_course" placeholder="课程ID">
-            <input id="at_teacher" placeholder="教师ID">
-            <button onclick="doAction('assignTeacher')">执行</button>
-          </div>
-        </div>
-        <div style="flex:1">
-          <h4>删除成绩 (deleteScore)</h4>
-          <div class="fields">
-            <input id="ds_id" placeholder="成绩ID">
-            <button onclick="doAction('deleteScore')" style="background:#ff4d4f">执行</button>
-          </div>
-        </div>
+      <div class="action-row">
+        <div class="field-group"><label>Course ID</label><input id="at_course" placeholder="1"></div>
+        <div class="field-group"><label>Teacher ID</label><input id="at_teacher" placeholder="1"></div>
+        <button class="action-btn primary" onclick="doAction('assignTeacher')">assignTeacher</button>
+        <div class="field-group"><label>Score ID</label><input id="ds_id" placeholder="1"></div>
+        <button class="action-btn danger" onclick="doAction('deleteScore')">deleteScore</button>
       </div>
     </div>
 
-    <!-- 查询结果 -->
-    <div class="result-section">
-      <div class="section-title">📊 查询结果</div>
+    <!-- Results -->
+    <div class="section" id="results-section">
+      <div class="section-title">Results</div>
       <div id="results"></div>
     </div>
   </div>
@@ -180,21 +376,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 
 <script>
 // ======================== 图谱 ========================
-let graphData = { nodes: [], edges: [] };      // 实例数据
-let schemaData = { nodes: [], edges: [] };     // 类型层数据
-let schemaMeta = null;                         // Schema 元数据
+let graphData = { nodes: [], edges: [] };
+let schemaData = { nodes: [], edges: [] };
+let schemaMeta = null;
 let currentView = 'schema';
 let instanceFilter = 'all';
-let nlQueryMode = 'oag';  // 'oag' | 'graph' | 'batch'
+let nlQueryMode = 'oag';
 let network = null;
-const colors = { Student: '#1890ff', Teacher: '#52c41a', Course: '#fa8c16', Score: '#e94560', Interface: '#722ed1' };
+
+const nodeColors = { Student: '#4a7c6f', Teacher: '#6b8c4a', Course: '#c08030', Score: '#c05050', Interface: '#7050a0' };
 
 async function loadGraph() {
   try {
     const [schemaResp, instanceResp, metaResp] = await Promise.all([
-      fetch('/ontology/graph/schema'),
-      fetch('/ontology/graph'),
-      fetch('/ontology/schema')
+      fetch('/ontology/graph/schema'), fetch('/ontology/graph'), fetch('/ontology/schema')
     ]);
     if (!schemaResp.ok || !instanceResp.ok) throw new Error('HTTP error');
     schemaData = await schemaResp.json();
@@ -204,44 +399,41 @@ async function loadGraph() {
     renderFunctionsPanel();
   } catch(e) {
     document.getElementById('graph-container').innerHTML =
-      '<div style="padding:40px;text-align:center;color:#ff4d4f;">图谱加载失败: ' + e.message + '</div>';
+      `<div style="padding:40px;text-align:center;color:var(--accent);">Graph load failed: ${e.message}</div>`;
     console.error('Graph load error:', e);
   }
 }
 
 function switchView(view) {
-  currentView = view;
-  instanceFilter = 'all';
-
-  document.getElementById('btn-schema').classList.toggle('active', view === 'schema');
-  document.getElementById('btn-instance').classList.toggle('active', view === 'instance');
-  document.querySelectorAll('.instance-only').forEach(el => {
-    el.style.display = view === 'instance' ? '' : 'none';
+  currentView = view; instanceFilter = 'all';
+  document.getElementById('btn-schema').classList.toggle('active', view==='schema');
+  document.getElementById('btn-instance').classList.toggle('active', view==='instance');
+  document.querySelectorAll('.instance-only').forEach(el=>{
+    el.style.display = view==='instance'?'':'none';
   });
-
-  if (view === 'schema') {
-    renderSchemaGraph();
-  } else {
-    renderInstanceGraph('all');
-  }
+  if (view==='schema') { renderSchemaGraph(); } else { renderInstanceGraph('all'); }
 }
 
 function renderSchemaGraph() {
   const nodes = new vis.DataSet(
     schemaData.nodes.map(n => {
-      // Interface 节点保持 API 返回的样式；Object Type 节点计算 Function 数量
-      if (n.group === 'Interface') return n;
+      if (n.group === 'Interface') return { ...n, color: { background: '#7050a0', border: '#4a3080' }, font: { color: '#fff', size: 15, face: 'Inter' } };
       const funcCount = schemaMeta && schemaMeta.functions
-        ? Object.values(schemaMeta.functions).filter(f => f.boundObject === n.group).length : 0;
+        ? Object.values(schemaMeta.functions).filter(f=>f.boundObject===n.group).length : 0;
       return {
         ...n,
-        label: n.label + (funcCount > 0 ? '\n⚡' + funcCount + ' Functions' : ''),
-        color: { background: colors[n.group] || '#999', border: '#555' },
+        label: n.label + (funcCount>0?'\n'+funcCount+' Functions':''),
+        color: { background: nodeColors[n.group]||'#888', border: '#333', highlight:{background:nodeColors[n.group]||'#888',border:'#111'} },
+        font: { color: '#ffffff', size: 15, face: 'Inter', bold: { color:'#ffffff', size:15, face:'Inter' } },
+        borderWidth: 2,
       };
     })
   );
-
-  const edges = new vis.DataSet(schemaData.edges);
+  const edges = new vis.DataSet(schemaData.edges.map(e => ({
+    ...e, color: { color: '#4a7c6f', opacity: 0.45 },
+    font: { color: '#b8402a', size: 11, background: '#fefdfb', strokeWidth: 3 },
+    width: 2,
+  })));
 
   const container = document.getElementById('graph-container');
   const options = {
@@ -250,48 +442,38 @@ function renderSchemaGraph() {
     },
     interaction: { hover: true },
   };
-
   if (network) { network.destroy(); }
   network = new vis.Network(container, { nodes, edges }, options);
-
   network.on('doubleClick', function(params) {
     if (params.nodes.length > 0) {
       const nodeId = params.nodes[0];
-      // Interface 节点不响应双击
       if (nodeId.startsWith('Interface-')) return;
       const typeName = nodeId.replace('Type-', '');
-      switchView('instance');
-      instanceFilter = typeName;
-      renderInstanceGraph(typeName);
-      document.querySelectorAll('.instance-only').forEach(b => b.classList.remove('active'));
-      const btnId = 'btn-filter-' + typeName.toLowerCase();
-      const btn = document.getElementById(btnId);
-      if (btn) btn.classList.add('active');
+      switchView('instance'); instanceFilter = typeName; renderInstanceGraph(typeName);
+      document.querySelectorAll('.instance-only').forEach(b=>b.classList.remove('active'));
+      const btn = document.getElementById('btn-filter-'+typeName.toLowerCase());
+      if(btn) btn.classList.add('active');
     }
   });
 }
 
 function renderInstanceGraph(filter) {
-  const filteredNodes = graphData.nodes.filter(
-    n => !filter || filter === 'all' || n.group === filter
-  );
-
+  const filteredNodes = graphData.nodes.filter(n=>!filter||filter==='all'||n.group===filter);
   const nodes = new vis.DataSet(
-    filteredNodes.map(n => ({
-      ...n, color: colors[n.group], shape: 'dot', size: 18,
-      font: { size: 11, color: '#333' }
-    }))
+    filteredNodes.map(n => {
+      const c = nodeColors[n.group]||'#888';
+      return {
+        ...n, color: { background: c, border: '#333', highlight: { background: c, border: '#111' } },
+        shape: 'dot', size: 18,
+        font: { size: 13, color: '#2c2416', face: 'Inter', bold: '#2c2416', strokeWidth: 2, strokeColor: '#fefdfb' }
+      };
+    })
   );
-
-  const nodeIds = new Set(filteredNodes.map(n => n.id));
+  const nodeIds = new Set(filteredNodes.map(n=>n.id));
   const edges = new vis.DataSet(
-    graphData.edges
-      .filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
-      .map(e => ({
-        ...e, arrows: 'to',
-        color: { opacity: 0.4 },
-        font: { size: 9, color: '#999', strokeWidth: 0 }
-      }))
+    graphData.edges.filter(e=>nodeIds.has(e.from)&&nodeIds.has(e.to))
+      .map(e=>({...e,arrows:'to',color:{opacity:0.4,color:'#4a7c6f'},width:1.5,
+        font:{size:10,color:'#b8402a',background:'#fefdfb',strokeWidth:3}}))
   );
 
   const container = document.getElementById('graph-container');
@@ -299,447 +481,248 @@ function renderInstanceGraph(filter) {
     physics: { stabilization: { iterations: 100 }, solver: 'forceAtlas2Based' },
     interaction: { hover: true, tooltipDelay: 200 },
   };
-
   if (network) { network.destroy(); }
   network = new vis.Network(container, { nodes, edges }, options);
-
   network.on('click', function(params) {
-    if (params.nodes.length > 0) {
-      expandNode(params.nodes[0]);
-    }
+    if (params.nodes.length > 0) expandNode(params.nodes[0]);
   });
 }
 
-// ======================== Functions 面板 ========================
+// ======================== Functions ========================
 function renderFunctionsPanel() {
-  if (!schemaMeta || !schemaMeta.functions) return;
+  if (!schemaMeta||!schemaMeta.functions) return;
   const funcs = schemaMeta.functions;
-  // 按 boundObject 分组
   const grouped = {};
-  for (const [name, f] of Object.entries(funcs)) {
-    const obj = f.boundObject || 'Other';
-    if (!grouped[obj]) grouped[obj] = [];
-    grouped[obj].push({ name, ...f });
+  for (const [name,f] of Object.entries(funcs)) {
+    const obj = f.boundObject||'Other';
+    if(!grouped[obj]) grouped[obj]=[];
+    grouped[obj].push({name,...f});
   }
-
-  let html = '';
-  let total = 0;
-  for (const [objType, funcList] of Object.entries(grouped)) {
-    html += `<div style="margin-bottom:8px;font-size:12px;font-weight:600;color:#555;">▸ ${objType}</div>`;
-    funcList.forEach(f => {
+  let html='',total=0;
+  for (const [objType,funcList] of Object.entries(grouped)) {
+    html+=`<div class="func-group-label">${objType}</div>`;
+    funcList.forEach(f=>{
       total++;
-      const isValidation = f.funcType === 'validation';
-      const isObjectSet = f.funcType === 'object_set';
-      const badgeColor = isValidation ? '#bbb' : (isObjectSet ? '#fa8c16' : '#1890ff');
-      const funcId = 'func-' + f.name;
-      html += `<div class="action-card" style="opacity:${isValidation ? '0.6' : '1'}">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
-          <span>
-            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${badgeColor};margin-right:6px;"></span>
-            <strong style="font-size:12px;">${f.name}</strong>
-            <span style="font-size:10px;color:#999;margin-left:4px;">${f.funcType === 'validation' ? '校验' : (f.funcType === 'object_set' ? '批量' : '标量')}</span>
-          </span>
-          ${!isValidation ? `<button style="font-size:10px;padding:2px 8px;" onclick="execFunction('${f.name}', '${objType}')">执行</button>` : '<span style="font-size:10px;color:#bbb;">自动触发</span>'}
+      const isValidation=f.funcType==='validation';
+      const isObjectSet=f.funcType==='object_set';
+      const dotColor = isValidation?'var(--ink-muted)':(isObjectSet?'#c08030':'var(--sage)');
+      const funcId='func-'+f.name;
+      html+=`<div class="func-card" style="opacity:${isValidation?'0.5':'1'}">
+        <div class="func-info">
+          <span class="func-dot" style="background:${dotColor}"></span>
+          <span class="func-name">${f.name}</span>
+          <span style="font-size:9px;color:var(--ink-muted);margin-left:6px;">${f.funcType==='validation'?'valid':(f.funcType==='object_set'?'batch':'scalar')}</span>
+          <div class="func-meta">${f.displayName||''} &rarr; ${f.returnType}${f.params&&f.params.length>0?' &middot; params: '+f.params.map(p=>p.name+':'+p.type).join(', '):''}</div>
         </div>
-        <div style="font-size:10px;color:#888;margin-top:4px;">${f.displayName || ''} → ${f.returnType}
-          ${f.params && f.params.length > 0 ? ' | 参数: ' + f.params.map(p => p.name + ':' + p.type).join(', ') : ''}
-        </div>
+        ${!isValidation?`<button onclick="execFunction('${f.name}','${objType}')">Run</button>`:'<span style="font-size:10px;color:var(--ink-muted)">auto</span>'}
         <div id="${funcId}-result" style="margin-top:6px;display:none;"></div>
       </div>`;
     });
   }
-  document.getElementById('functions-list').innerHTML = html;
-  document.getElementById('func-count').textContent = `(${total} 个)`;
+  document.getElementById('functions-list').innerHTML=html;
+  document.getElementById('func-count').textContent='('+total+' functions)';
 }
 
-async function execFunction(funcName, objType) {
-  const funcId = 'func-' + funcName;
-  const resultEl = document.getElementById(funcId + '-result');
-  resultEl.style.display = 'block';
-  resultEl.innerHTML = '<span class="spinner"></span>执行中...';
-
-  // 参数收集：必填参数 prompt，可选参数也 prompt 但允许留空跳过
-  const funcDef = schemaMeta.functions[funcName];
-  let params = {};
-  if (funcDef && funcDef.params && funcDef.params.length > 0) {
-    for (const p of funcDef.params) {
-      const hint = p.required ? `请输入 ${p.name} (${p.type}):` : `请输入 ${p.name} (${p.type}, 可选，留空跳过):`;
-      const val = prompt(hint, '');
-      if (val === null) {
-        if (p.required) { resultEl.innerHTML = '已取消'; return; }
-        continue;
+async function execFunction(funcName,objType) {
+  const funcId='func-'+funcName;
+  const resultEl=document.getElementById(funcId+'-result');
+  resultEl.style.display='block';
+  resultEl.innerHTML='<span class="spinner"></span>running...';
+  const funcDef=schemaMeta.functions[funcName];
+  let params={};
+  if(funcDef&&funcDef.params&&funcDef.params.length>0){
+    for(const p of funcDef.params){
+      const hint=p.required?p.name+' ('+p.type+'):':p.name+' ('+p.type+', optional):';
+      const val=prompt(hint,'');
+      if(val===null){if(p.required){resultEl.innerHTML='cancelled';return;}continue;}
+      if(val.trim()===''&&!p.required)continue;
+      if(p.type==='integer'||p.type==='int'){params[p.name]=parseInt(val);}
+      else if(p.type==='float'||p.type==='number'){params[p.name]=parseFloat(val);}
+      else{params[p.name]=val;}
+    }
+  }
+  const qp=[];
+  for(const [k,v] of Object.entries(params)) qp.push(k+'='+encodeURIComponent(v));
+  const url='/ontology/functions/'+funcName+(qp.length>0?'?'+qp.join('&'):'');
+  try{
+    const resp=await fetch(url);const data=await resp.json();
+    if(data.success){
+      const val=data.data;
+      if(Array.isArray(val)){
+        let table='<table class="result-table"><thead><tr>';
+        const keys=Object.keys(val[0]||{}).filter(k=>!k.startsWith('_'));
+        keys.forEach(k=>table+='<th>'+k+'</th>');
+        table+='</tr></thead><tbody>';
+        val.forEach(row=>{table+='<tr>';keys.forEach(k=>table+='<td>'+(row[k]??'-')+'</td>');table+='</tr>';});
+        table+='</tbody></table>';
+        resultEl.innerHTML=table;
+      }else if(typeof val==='object'&&val!==null){
+        resultEl.innerHTML='<pre style="font-size:10px;color:var(--ink-soft);margin-top:4px;">'+JSON.stringify(val,null,2)+'</pre>';
+      }else{
+        resultEl.innerHTML='<span style="font-weight:600;color:var(--sage);font-size:16px;">'+(val??'no data')+'</span>';
       }
-      if (val.trim() === '' && !p.required) continue;
-      // 整数参数不转 float
-      if (p.type === 'integer' || p.type === 'int') {
-        params[p.name] = parseInt(val);
-      } else if (p.type === 'float' || p.type === 'number') {
-        params[p.name] = parseFloat(val);
-      } else {
-        params[p.name] = val;
-      }
-    }
-  }
-
-  const queryParts = [];
-  for (const [k, v] of Object.entries(params)) {
-    queryParts.push(k + '=' + encodeURIComponent(v));
-  }
-  const url = '/ontology/functions/' + funcName + (queryParts.length > 0 ? '?' + queryParts.join('&') : '');
-
-  try {
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (data.success) {
-      const val = data.data;
-      if (Array.isArray(val)) {
-        let table = '<table class="result-table"><thead><tr>';
-        const firstRow = val[0] || {};
-        const keys = Object.keys(firstRow).filter(k => !k.startsWith('_'));
-        keys.forEach(k => table += `<th>${k}</th>`);
-        table += '</tr></thead><tbody>';
-        val.forEach(row => {
-          table += '<tr>';
-          keys.forEach(k => table += `<td>${row[k] ?? '-'}</td>`);
-          table += '</tr>';
-        });
-        table += '</tbody></table>';
-        resultEl.innerHTML = table;
-      } else if (typeof val === 'object' && val !== null) {
-        resultEl.innerHTML = '<pre style="font-size:11px;">' + JSON.stringify(val, null, 2) + '</pre>';
-      } else {
-        resultEl.innerHTML = `<span style="font-weight:600;color:#1890ff;font-size:16px;">${val ?? '无数据'}</span>`;
-      }
-    } else {
-      resultEl.innerHTML = `<span style="color:#ff4d4f;">错误: ${data.error}</span>`;
-    }
-  } catch(e) {
-    resultEl.innerHTML = `<span style="color:#ff4d4f;">请求失败: ${e.message}</span>`;
-  }
+    }else{resultEl.innerHTML='<span class="error-msg">'+data.error+'</span>';}
+  }catch(e){resultEl.innerHTML='<span class="error-msg">'+e.message+'</span>';}
 }
 
-function filterGraph(type) {
-  instanceFilter = type;
-  renderInstanceGraph(type);
-  document.querySelectorAll('.graph-toolbar .instance-only').forEach(b => b.classList.remove('active'));
-  const btnId = 'btn-filter-' + (type === 'all' ? 'all' : type.toLowerCase());
-  const btn = document.getElementById(btnId);
-  if (btn) btn.classList.add('active');
+function filterGraph(type){
+  instanceFilter=type;renderInstanceGraph(type);
+  document.querySelectorAll('.graph-toolbar .instance-only').forEach(b=>b.classList.remove('active'));
+  const btn=document.getElementById('btn-filter-'+(type==='all'?'all':type.toLowerCase()));
+  if(btn)btn.classList.add('active');
 }
 
-function expandNode(nodeId) {
-  const [type, id] = nodeId.split('-');
-  const relatedEdges = graphData.edges.filter(e => e.from === nodeId || e.to === nodeId);
-  const relatedNodes = new Set();
-  relatedEdges.forEach(e => { relatedNodes.add(e.from); relatedNodes.add(e.to); });
-
-  const visibleNodes = graphData.nodes.map(n => ({
-    id: n.id,
-    color: relatedNodes.has(n.id) ? colors[n.group] : { background: '#eee', border: '#ddd' },
-    shape: 'dot',
-    size: relatedNodes.has(n.id) ? 22 : 10,
-    font: { size: relatedNodes.has(n.id) ? 12 : 0, color: '#333' },
-    hidden: false,
-  }));
-
-  const visibleEdges = graphData.edges
-    .filter(e => relatedNodes.has(e.from) || relatedNodes.has(e.to))
-    .map(e => ({ ...e, color: { opacity: 0.6 }, arrows: 'to' }));
-
-  network.setData({ nodes: new vis.DataSet(visibleNodes), edges: new vis.DataSet(visibleEdges) });
-}
-
-// ======================== 自然语言查询 ========================
-async function nlQuery() {
-  const input = document.getElementById('nlInput').value.trim();
-  if (!input) return;
-
-  const btn = document.getElementById('nlBtn');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span>查询中...';
-
-  document.getElementById('answerBox').style.display = 'none';
-  document.getElementById('explorationLog').style.display = 'none';
-  document.getElementById('explorationLog').innerHTML = '';
-
-  const endpoints = {
-    'oag': '/ontology/nl-query-oag',
-    'graph': '/ontology/nl-query-graph',
-    'batch': '/ontology/nl-query'
-  };
-  const endpoint = endpoints[nlQueryMode] || endpoints.oag;
-
-  try {
-    const resp = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ query: input })
-    });
-    const data = await resp.json();
-
-    // 显示回答
-    if (data.answer) {
-      const box = document.getElementById('answerBox');
-      box.style.display = 'block';
-      box.textContent = data.answer;
-    }
-
-    if (nlQueryMode === 'oag') {
-      // OAG 模式：显示探索日志
-      renderOagExploration(data.exploration_log || []);
-    } else if (nlQueryMode === 'graph') {
-      // 图谱模式：显示探索路径 + 动画
-      renderExplorationPath(data.exploration_path || []);
-    } else {
-      // 批量模式：显示操作步骤和结果
-      renderResults(data);
-    }
-  } catch(e) {
-    document.getElementById('answerBox').style.display = 'block';
-    document.getElementById('answerBox').textContent = '查询失败: ' + e.message;
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = '查询';
-  }
-}
-
-function switchNlMode(mode) {
-  nlQueryMode = mode;
-  document.getElementById('btn-mode-oag').classList.toggle('active', mode === 'oag');
-  document.getElementById('btn-mode-graph').classList.toggle('active', mode === 'graph');
-  document.getElementById('btn-mode-batch').classList.toggle('active', mode === 'batch');
-  document.getElementById('explorationLog').style.display = 'none';
-  document.getElementById('explorationLog').innerHTML = '';
-
-  // 更新 placeholder 和 hints
-  const input = document.getElementById('nlInput');
-  const hints = document.getElementsByClassName('nl-hints')[0];
-  if (mode === 'oag') {
-    input.placeholder = '例：张三高等数学多少分';
-    hints.textContent = 'OAG（类型层查询）· 试试：张三高等数学多少分 · 优秀学生有哪些 · 张三的平均分';
-  } else if (mode === 'graph') {
-    input.placeholder = '例：查张三所有课程的平均分';
-    hints.textContent = '图谱游走（实例探索）· 试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率';
-  } else {
-    input.placeholder = '例：查张三所有课程的平均分';
-    hints.textContent = '批量规划（JSON 计划）· 试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率';
-  }
-}
-
-function renderOagExploration(log) {
-  const logEl = document.getElementById('explorationLog');
-  logEl.style.display = 'block';
-
-  if (!log || log.length === 0) {
-    logEl.innerHTML = '<div style="color:#999;">无探索步骤（直接回答）</div>';
-    return;
-  }
-
-  let html = '<div style="font-weight:600;margin-bottom:4px;color:#1890ff;">⚡ OAG 查询日志 (' + log.length + ' 步)</div>';
-  log.forEach((step, i) => {
-    html += `<div class="exploration-step">
-      <div class="step-num">${i+1}</div>
-      <div class="step-info">
-        <div class="step-tool">${step.tool}</div>
-        <div class="step-input">${JSON.stringify(step.input)}</div>
-        <div class="step-summary">→ ${step.summary}</div>
-      </div>
-    </div>`;
+function expandNode(nodeId){
+  const [type,id]=nodeId.split('-');
+  const relatedEdges=graphData.edges.filter(e=>e.from===nodeId||e.to===nodeId);
+  const relatedNodes=new Set();
+  relatedEdges.forEach(e=>{relatedNodes.add(e.from);relatedNodes.add(e.to);});
+  const visibleNodes=graphData.nodes.map(n=>{
+    const c=nodeColors[n.group]||'#888';
+    return{
+      id:n.id,
+      color:relatedNodes.has(n.id)?{background:c,border:'#111',highlight:{background:c,border:'#111'}}:{background:'#e8e2d8',border:'#ccc'},
+      shape:'dot',size:relatedNodes.has(n.id)?24:8,
+      font:{size:relatedNodes.has(n.id)?14:0,color:'#2c2416',face:'Inter',strokeWidth:2,strokeColor:'#fefdfb'},hidden:false,
+    };
   });
-  logEl.innerHTML = html;
+  const visibleEdges=graphData.edges.filter(e=>relatedNodes.has(e.from)||relatedNodes.has(e.to))
+    .map(e=>({...e,color:{opacity:0.5,color:'#4a7c6f'},width:2,arrows:'to'}));
+  network.setData({nodes:new vis.DataSet(visibleNodes),edges:new vis.DataSet(visibleEdges)});
 }
 
-function renderExplorationPath(path) {
-  const logEl = document.getElementById('explorationLog');
-  logEl.style.display = 'block';
+// ======================== NL Query ========================
+async function nlQuery(){
+  const input=document.getElementById('nlInput').value.trim();
+  if(!input)return;
+  const btn=document.getElementById('nlBtn');
+  btn.disabled=true;btn.innerHTML='<span class="spinner"></span>querying...';
+  document.getElementById('answerBox').style.display='none';
+  document.getElementById('explorationLog').style.display='none';
+  document.getElementById('explorationLog').innerHTML='';
+  const endpoints={'oag':'/ontology/nl-query-oag','graph':'/ontology/nl-query-graph','batch':'/ontology/nl-query'};
+  const endpoint=endpoints[nlQueryMode]||endpoints.oag;
+  try{
+    const resp=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:input})});
+    const data=await resp.json();
+    if(data.answer){
+      const box=document.getElementById('answerBox');
+      box.style.display='block';box.textContent=data.answer;
+    }
+    if(nlQueryMode==='oag'){renderOagExploration(data.exploration_log||[]);}
+    else if(nlQueryMode==='graph'){renderExplorationPath(data.exploration_path||[]);}
+    else{renderResults(data);}
+  }catch(e){
+    document.getElementById('answerBox').style.display='block';
+    document.getElementById('answerBox').textContent='Query failed: '+e.message;
+  }finally{btn.disabled=false;btn.innerHTML='Query';}
+}
 
-  if (!path || path.length === 0) {
-    logEl.innerHTML = '<div style="color:#999;">无探索步骤（直接回答）</div>';
-    return;
-  }
+function switchNlMode(mode){
+  nlQueryMode=mode;
+  document.getElementById('btn-mode-oag').classList.toggle('active',mode==='oag');
+  document.getElementById('btn-mode-graph').classList.toggle('active',mode==='graph');
+  document.getElementById('btn-mode-batch').classList.toggle('active',mode==='batch');
+  document.getElementById('explorationLog').style.display='none';
+  document.getElementById('explorationLog').innerHTML='';
+  const input=document.getElementById('nlInput');
+  const hints=document.getElementsByClassName('nl-hints')[0];
+  if(mode==='oag'){input.placeholder='张三高等数学多少分';hints.innerHTML='Ontology Augmented Generation &middot; 试试：张三高等数学多少分 &middot; 优秀学生有哪些';}
+  else if(mode==='graph'){input.placeholder='查张三所有课程的平均分';hints.innerHTML='Graph Walk (实例探索) &middot; 试试：查张三的成绩 &middot; 高等数学谁考了最高分';}
+  else{input.placeholder='查张三所有课程的平均分';hints.innerHTML='Batch Plan (JSON计划) &middot; 试试：查张三的成绩 &middot; 高等数学谁考了最高分';}
+}
 
-  let html = '<div style="font-weight:600;margin-bottom:4px;color:#333;">🗺️ 图谱游走路径 (' + path.length + ' 步)</div>';
-  path.forEach((step, i) => {
-    html += `<div class="exploration-step">
-      <div class="step-num">${i+1}</div>
-      <div class="step-info">
-        <div class="step-tool">${step.tool_name}</div>
-        <div class="step-input">${JSON.stringify(step.tool_input)}</div>
-        <div class="step-summary">→ ${step.tool_result_summary}</div>
-      </div>
-    </div>`;
+function renderOagExploration(log){
+  const logEl=document.getElementById('explorationLog');
+  logEl.style.display='block';
+  if(!log||!log.length){logEl.innerHTML='<div style="color:var(--ink-muted);">No exploration steps (direct answer)</div>';return;}
+  let html='<div style="font-weight:600;margin-bottom:6px;color:var(--sage);">OAG Query Log ('+log.length+' steps)</div>';
+  log.forEach((step,i)=>{
+    html+=`<div class="exploration-step"><div class="step-num">${i+1}</div><div class="step-info"><div class="step-tool">${step.tool}</div><div class="step-input">${JSON.stringify(step.input)}</div><div class="step-summary">&rarr; ${step.summary}</div></div></div>`;
   });
-  logEl.innerHTML = html;
+  logEl.innerHTML=html;
+}
 
-  // 在图谱上动画展示
+function renderExplorationPath(path){
+  const logEl=document.getElementById('explorationLog');
+  logEl.style.display='block';
+  if(!path||!path.length){logEl.innerHTML='<div style="color:var(--ink-muted);">No exploration steps</div>';return;}
+  let html='<div style="font-weight:600;margin-bottom:6px;color:var(--sage);">Graph Walk Path ('+path.length+' steps)</div>';
+  path.forEach((step,i)=>{
+    html+=`<div class="exploration-step"><div class="step-num">${i+1}</div><div class="step-info"><div class="step-tool">${step.tool_name}</div><div class="step-input">${JSON.stringify(step.tool_input)}</div><div class="step-summary">&rarr; ${step.tool_result_summary}</div></div></div>`;
+  });
+  logEl.innerHTML=html;
   animateExploration(path);
 }
 
-function animateExploration(path) {
-  if (currentView !== 'instance') {
-    switchView('instance');
-  }
-
-  // 收集所有访问过的节点和边
-  const allVisitedNodes = new Set();
-  const allVisitedEdges = [];
-  path.forEach(step => {
-    (step.visited_node_keys || []).forEach(k => allVisitedNodes.add(k));
-    (step.visited_edges || []).forEach(e => allVisitedEdges.push(e));
+function animateExploration(path){
+  if(currentView!=='instance')switchView('instance');
+  const allVisitedNodes=new Set(),allVisitedEdges=[];
+  path.forEach(step=>{(step.visited_node_keys||[]).forEach(k=>allVisitedNodes.add(k));(step.visited_edges||[]).forEach(e=>allVisitedEdges.push(e));});
+  if(allVisitedNodes.size===0)return;
+  const existingNodes=network.body.data.nodes,existingEdges=network.body.data.edges;
+  const updatedNodes=existingNodes.get().map(n=>{
+    const isVisited=allVisitedNodes.has(n.id);
+    const c=nodeColors[n.objectType||n.group]||'#c05050';
+    return{id:n.id,color:isVisited?{background:c,border:'#111',highlight:{background:c,border:'#111'}}:{background:'#e8e2d8',border:'#ccc'},size:isVisited?24:6,font:{size:isVisited?14:8,color:isVisited?'#2c2416':'#bbb',face:'Inter',bold:!!isVisited,strokeWidth:isVisited?2:0,strokeColor:'#fefdfb'},borderWidth:isVisited?3:1};
   });
-
-  if (allVisitedNodes.size === 0) return;
-
-  // 构建高亮节点和边的 vis 数据集
-  const existingNodes = network.body.data.nodes;
-  const existingEdges = network.body.data.edges;
-
-  // 重置所有节点样式
-  const updatedNodes = existingNodes.get().map(n => {
-    const isVisited = allVisitedNodes.has(n.id);
-    const objType = n.objectType || n.group;
-    return {
-      id: n.id,
-      color: isVisited
-        ? { background: colors[objType] || '#ff4d4f', border: '#333', highlight: { background: colors[objType], border: '#333' } }
-        : { background: '#eee', border: '#ddd', highlight: { background: '#eee', border: '#ddd' } },
-      size: isVisited ? 22 : 10,
-      font: { size: isVisited ? 13 : 10, color: isVisited ? '#333' : '#ccc', bold: isVisited ? true : false },
-      borderWidth: isVisited ? 3 : 1,
-    };
-  });
-
-  const edgeMap = {};
-  allVisitedEdges.forEach(e => { edgeMap[e.from + '|' + e.to] = true; });
-
-  const updatedEdges = existingEdges.get().map(e => {
-    const key = e.from + '|' + e.to;
-    const keyRev = e.to + '|' + e.from;
-    const isVisited = edgeMap[key] || edgeMap[keyRev];
-    return {
-      id: e.id,
-      color: isVisited ? { color: '#ff4d4f', opacity: 1, highlight: { color: '#ff4d4f', opacity: 1 } } : { color: '#ddd', opacity: 0.15 },
-      width: isVisited ? 4 : 1,
-    };
-  });
-
-  network.setData({ nodes: new vis.DataSet(updatedNodes), edges: new vis.DataSet(updatedEdges) });
-
-  // 聚焦到最后访问的节点
-  const lastStep = path[path.length - 1];
-  const lastNodes = lastStep.visited_node_keys || [];
-  if (lastNodes.length > 0) {
-    setTimeout(() => network.focus(lastNodes[lastNodes.length - 1], { scale: 1.2, animation: true }), 300);
-  }
+  const edgeMap={};
+  allVisitedEdges.forEach(e=>{edgeMap[e.from+'|'+e.to]=true;});
+  const updatedEdges=existingEdges.get().map(e=>{const k=e.from+'|'+e.to;const kr=e.to+'|'+e.from;const v=edgeMap[k]||edgeMap[kr];return{id:e.id,color:v?{color:'#b8402a',opacity:1}:{color:'#ddd',opacity:0.15},width:v?4:1};});
+  network.setData({nodes:new vis.DataSet(updatedNodes),edges:new vis.DataSet(updatedEdges)});
+  const lastStep=path[path.length-1],lastNodes=lastStep.visited_node_keys||[];
+  if(lastNodes.length>0)setTimeout(()=>network.focus(lastNodes[lastNodes.length-1],{scale:1.2,animation:true}),300);
 }
 
-function renderResults(data) {
-  const el = document.getElementById('results');
-  let html = '';
-
-  // 显示错误
-  if (!data.success && data.error) {
-    html += `<div style="background:#fff2f0;border:1px solid #ffccc7;border-radius:6px;padding:8px 12px;color:#ff4d4f;font-size:13px;">查询失败: ${data.error}</div>`;
-    el.innerHTML = html;
-    return;
+function renderResults(data){
+  const el=document.getElementById('results');let html='';
+  if(!data.success&&data.error){el.innerHTML='<div class="error-msg">Query failed: '+data.error+'</div>';return;}
+  if(data.operations&&data.operations.length>0){
+    html+='<div style="font-size:10px;color:var(--ink-muted);margin-bottom:8px;">Steps: ';
+    html+=data.operations.map((o,i)=>'<span style="background:var(--bg-page);padding:1px 6px;border-radius:2px;margin:0 2px;">'+(i+1)+'. '+o.op+'</span>').join(' &rarr; ');
+    html+='</div>';
   }
-
-  if (data.operations && data.operations.length > 0) {
-    html += '<div style="font-size:11px;color:#999;margin-bottom:8px;">执行步骤: ';
-    html += data.operations.map((o,i) => `<span style="background:#f5f5f5;padding:1px 4px;border-radius:2px;margin:0 2px;">${i+1}. ${o.op}</span>`).join(' → ');
-    html += '</div>';
-  }
-
-  if (data.results && data.results.length > 0) {
-    data.results.forEach((r, i) => {
-      // 错误结果
-      if (r.error) {
-        html += `<div style="font-size:12px;color:#ff4d4f;margin:4px 0;">步骤${i+1} 出错: ${r.error}</div>`;
-        return;
-      }
-      if (r.data === null || r.data === undefined) {
-        html += `<div style="font-size:12px;color:#999;margin:4px 0;">步骤${i+1}: 无结果</div>`;
-        return;
-      }
-      const stepLabel = data.results.length > 1 ? `<span style="font-size:10px;color:#999;">步骤${i+1}:</span> ` : '';
-      if (Array.isArray(r.data) && r.data.length > 0) {
-        html += stepLabel + renderTable(r.data);
-      } else if (Array.isArray(r.data) && r.data.length === 0) {
-        html += `<p style="color:#999;font-size:13px;">${stepLabel}无数据</p>`;
-      } else if (typeof r.data === 'object' && r.data !== null) {
-        html += stepLabel + renderTable([r.data]);
-      } else if (typeof r.data === 'string' || typeof r.data === 'number') {
-        html += `<p style="font-size:18px;font-weight:600;color:#1890ff;">${stepLabel}${r.data}</p>`;
-      }
+  if(data.results&&data.results.length>0){
+    data.results.forEach((r,i)=>{
+      if(r.error){html+='<div class="error-msg">Step '+(i+1)+': '+r.error+'</div>';return;}
+      if(r.data===null||r.data===undefined){html+='<div style="color:var(--ink-muted);font-size:12px;">Step '+(i+1)+': no result</div>';return;}
+      const stepLabel=data.results.length>1?'<span style="font-size:10px;color:var(--ink-muted);">Step '+(i+1)+':</span> ':'';
+      if(Array.isArray(r.data)&&r.data.length>0){html+=stepLabel+renderTable(r.data);}
+      else if(Array.isArray(r.data)&&r.data.length===0){html+='<div style="color:var(--ink-muted);font-size:12px;">'+stepLabel+'no data</div>';}
+      else if(typeof r.data==='object'&&r.data!==null){html+=stepLabel+renderTable([r.data]);}
+      else if(typeof r.data==='string'||typeof r.data==='number'){html+='<div style="font-size:18px;font-weight:600;color:var(--sage);">'+stepLabel+r.data+'</div>';}
     });
   }
-
-  el.innerHTML = html || '<p style="color:#999;">等待查询...</p>';
+  el.innerHTML=html||'<div style="color:var(--ink-muted);">Awaiting query&hellip;</div>';
 }
 
-function renderTable(items) {
-  if (!items.length) return '';
-  const keys = Object.keys(items[0]).filter(k => !k.startsWith('_'));
-  let html = '<table class="result-table"><thead><tr>';
-  keys.forEach(k => html += `<th>${k}</th>`);
-  html += '</tr></thead><tbody>';
-  items.forEach(item => {
-    html += '<tr>';
-    keys.forEach(k => {
-      let val = item[k];
-      if (k === 'passRate' || String(val).includes('%')) {
-        val = `<span class="badge-tag ${String(val).startsWith('0') ? 'badge-fail' : 'badge-pass'}">${val}</span>`;
-      }
-      html += `<td>${val ?? '-'}</td>`;
-    });
-    html += '</tr>';
-  });
-  html += '</tbody></table>';
-  return html;
+function renderTable(items){
+  if(!items.length)return'';
+  const keys=Object.keys(items[0]).filter(k=>!k.startsWith('_'));
+  let h='<table class="result-table"><thead><tr>';
+  keys.forEach(k=>h+='<th>'+k+'</th>');
+  h+='</tr></thead><tbody>';
+  items.forEach(item=>{h+='<tr>';keys.forEach(k=>{let v=item[k];if(k==='passRate'||String(v).includes('%'))v='<span class="badge-tag '+(String(v).startsWith('0')?'badge-fail':'badge-pass')+'">'+v+'</span>';h+='<td>'+(v??'-')+'</td>';});h+='</tr>';});
+  h+='</tbody></table>';
+  return h;
 }
 
-// ======================== Action 执行 ========================
-async function doAction(name) {
-  const params = {};
-  if (name === 'createScore') {
-    params.studentId = parseInt(document.getElementById('cs_student').value);
-    params.courseId = parseInt(document.getElementById('cs_course').value);
-    params.scoreValue = parseFloat(document.getElementById('cs_score').value);
-    params.examDate = document.getElementById('cs_date').value;
-  } else if (name === 'updateScore') {
-    params.scoreId = parseInt(document.getElementById('us_id').value);
-    params.scoreValue = parseFloat(document.getElementById('us_score').value);
-  } else if (name === 'assignTeacher') {
-    params.courseId = parseInt(document.getElementById('at_course').value);
-    params.teacherId = parseInt(document.getElementById('at_teacher').value);
-  } else if (name === 'deleteScore') {
-    params.scoreId = parseInt(document.getElementById('ds_id').value);
-  }
-
-  try {
-    const resp = await fetch(`/ontology/actions/${name}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ params })
-    });
-    const data = await resp.json();
-    document.getElementById('results').innerHTML =
-      `<div style="padding:12px;border-radius:6px;background:${data.success ? '#f6ffed' : '#fff2f0'};border:1px solid ${data.success ? '#b7eb8f' : '#ffccc7'};">
-        <strong>${data.success ? '✓' : '✗'}</strong> ${data.message || data.error || JSON.stringify(data)}
-      </div>`;
-    if (data.success) {
-      // 刷新实例数据
-      fetch('/ontology/graph').then(r => r.json()).then(d => {
-        graphData = d;
-        if (currentView === 'instance') renderInstanceGraph(instanceFilter);
-      });
-    }
-  } catch(e) {
-    document.getElementById('results').innerHTML = `<p style="color:#ff4d4f;">请求失败: ${e.message}</p>`;
-  }
+// ======================== Actions ========================
+async function doAction(name){
+  const params={};
+  if(name==='createScore'){params.studentId=parseInt(document.getElementById('cs_student').value);params.courseId=parseInt(document.getElementById('cs_course').value);params.scoreValue=parseFloat(document.getElementById('cs_score').value);params.examDate=document.getElementById('cs_date').value;}
+  else if(name==='updateScore'){params.scoreId=parseInt(document.getElementById('us_id').value);params.scoreValue=parseFloat(document.getElementById('us_score').value);}
+  else if(name==='assignTeacher'){params.courseId=parseInt(document.getElementById('at_course').value);params.teacherId=parseInt(document.getElementById('at_teacher').value);}
+  else if(name==='deleteScore'){params.scoreId=parseInt(document.getElementById('ds_id').value);}
+  try{
+    const resp=await fetch('/ontology/actions/'+name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params})});
+    const data=await resp.json();
+    const cls=data.success?'success-msg':'error-msg';
+    document.getElementById('results').innerHTML='<div class="'+cls+'">'+(data.success?'&check;':'&times;')+' '+(data.message||data.error||JSON.stringify(data))+'</div>';
+    if(data.success){fetch('/ontology/graph').then(r=>r.json()).then(d=>{graphData=d;if(currentView==='instance')renderInstanceGraph(instanceFilter);});}
+  }catch(e){document.getElementById('results').innerHTML='<div class="error-msg">'+e.message+'</div>';}
 }
 
-// 初始加载
 loadGraph();
 </script>
 </body>

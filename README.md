@@ -78,7 +78,7 @@ Ontology 语义层
 
 ### OAG 模式 `POST /ontology/nl-query-oag`（推荐）
 
-**OAG（Object-Action-Graph）模式**：LLM 在对象类型层面声明查询意图，引擎根据 Link 定义自动编译 SQL JOIN。**LLM 不接触实例数据和遍历逻辑。**
+**OAG（Ontology Augmented Generation）模式**：LLM 在对象类型层面声明查询意图，引擎根据 Link 定义自动编译 SQL JOIN。**LLM 不接触实例数据和遍历逻辑。**
 
 核心理念与 [Palantir AIP 的 OAG](https://www.palantir.com/docs/foundry/ontology/ontology-augmented-generation) 一致：Ontology 作为约束系统，LLM 只负责理解用户意图和填充参数，不参与查询执行路径的编排。
 
