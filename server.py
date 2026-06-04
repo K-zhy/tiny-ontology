@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import Optional
 
-from ontology_engine.database import init_db
+from ontology_engine.database import init_db, get_connection
 from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, ACTION_TYPES, FUNCTIONS, INTERFACES, OBJECT_SETS
 from ontology_engine.query import get_object, query_objects, traverse_link, query_objects_v2, query_object_set, fill_derived_batch
 from ontology_engine.action import execute_action
@@ -186,6 +186,23 @@ def api_query_object_set(set_name: str, limit: int = Query(50)):
     return result
 
 
+@app.get("/ontology/tables")
+def api_list_tables():
+    """返回所有原始数据表的结构和数据（用于前端展示底层 SQL 数据）"""
+    tables = {}
+    for table_name in ["student", "teacher", "course", "score", "audit_log"]:
+        conn = get_connection()
+        # 获取列信息
+        cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        columns = [{"name": c["name"], "type": c["type"], "pk": bool(c["pk"])} for c in cols]
+        # 获取数据（限制行数）
+        rows = conn.execute(f"SELECT * FROM {table_name} LIMIT 100").fetchall()
+        data = [dict(r) for r in rows]
+        conn.close()
+        tables[table_name] = {"columns": columns, "data": data, "row_count": len(data)}
+    return {"success": True, "tables": tables}
+
+
 # ============================================================
 # 自然语言查询 API
 # ============================================================
@@ -236,10 +253,11 @@ async def api_nl_query(req: dict):
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]"),
+                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-flash"),
                     "max_tokens": 4096,
                     "system": system_prompt,
                     "messages": [{"role": "user", "content": query_text}],
+                    "thinking": {"type": "disabled"},
                 },
             )
             data = resp.json()
@@ -409,11 +427,12 @@ async def _generate_answer(query: str, results: list, schema_context: str) -> st
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]"),
+                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-flash"),
                     "max_tokens": 300,
                     "messages": [
                         {"role": "user", "content": f"用户问题：{query}\n\n查询结果：{json.dumps(results, ensure_ascii=False)}\n\n请用简洁的中文回答用户问题，直接给出答案即可。"}
                     ],
+                    "thinking": {"type": "disabled"},
                 },
             )
             data = resp.json()
@@ -680,14 +699,18 @@ async def _call_llm_graph(system: str, tools: list[dict], messages: list[dict]) 
                     "Content-Type": "application/json",
                 },
                 json={
-                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-pro[1m]"),
+                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-flash"),
                     "max_tokens": 2048,
                     "system": system,
                     "tools": tools,
                     "messages": messages,
+                    "thinking": {"type": "disabled"},
                 },
             )
-            return resp.json()
+            data = resp.json()
+            if resp.status_code >= 400:
+                return {"content": [{"type": "text", "text": f"API error {resp.status_code}: {data}"}], "stop_reason": "error"}
+            return data
     except Exception as e:
         return {"content": [{"type": "text", "text": str(e)}], "stop_reason": "error"}
 
@@ -997,9 +1020,10 @@ def _build_oag_system_prompt() -> str:
 ## 核心原则
 1. 你通过 **query_objects** 在类型层面声明查询意图，用属性过滤条件返回结果。不要遍历实例图。
 2. 对象属性支持**跨 Link 点号过滤**（如 filters={{{{ "student.name": "张三", "course.name": "数学" }}}}），系统自动处理跨表 JOIN。
-3. 查询结果**自动包含派生属性**（avgScore、passRate），无需额外调用函数获取。
+3. 查询结果**自动包含派生属性**（avgScore、passRate）。Score 查询结果**自动附带 studentName、courseName、teacherName**。
 4. 预定义的 ObjectSet 通过 **query_object_set** 引用，如 TopStudents、PassedCourses。
 5. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
+6. **再次强调：Score 结果已经包含 studentName、courseName、teacherName，你不需要再单独查 Student 或 Course 表！**
 
 ## Schema
 
@@ -1009,15 +1033,18 @@ def _build_oag_system_prompt() -> str:
 - **TopStudents**: 平均分 >= 85 的优秀学生
 - **PassedCourses**: 课程平均分 >= 60 的及格课程
 
-## 查询示例
+## 常用查询模式
 - "张三的数学成绩" → query_objects(type="Score", filters={{{{ "student.name": "张三", "course.name": "数学" }}}})
 - "优秀学生有哪些" → query_object_set(set_name="TopStudents")
 - "张三的平均分" → query_objects(type="Student", filters={{{{ "name": "张三" }}}})，结果含 avgScore
-- "数学课谁最高分" → 先 query_objects 找 Course id，再 call_function getTopStudents
+- "谁的成绩最差" → query_objects(type="Score", order_by="scoreValue", order_dir="asc", limit=1) — 结果自带 studentName
+- "高等数学谁最高分" → query_objects(type="Score", filters={{{{ "course.name": "高等数学" }}}}, order_by="scoreValue", order_dir="desc", limit=1)
 - "有哪些类型的对象" → list_object_types
 
 ## 规则
-- 得到足够信息后立即回答，不要继续深挖
+- **Score 结果已经包含 studentName、courseName、teacherName，不要再单独查 Student/Course！**
+- 找最好/最差/最高/最低时用 order_by + order_dir + limit=1
+- 知道某属性值但不知道具体类型时，先查对应类型，再用跨 Link 过滤
 - 找不到就说没找到，不编造数据
 - 跨 Link 过滤优先用点号语法，而非多步查询"""
 
@@ -1031,8 +1058,7 @@ def _build_oag_tool_schemas() -> list[dict]:
         },
         {
             "name": "query_objects",
-            "description": "在类型层面查询对象，支持跨 Link 点号过滤。例如查询成绩时过滤 student.name='张三'、course.name='数学'。结果自动含派生属性（avgScore、passRate）。",
-            "input_schema": {
+            "description": "在类型层面查询对象，支持跨 Link 点号过滤。例如查询成绩时过滤 student.name='张三'、course.name='数学'。结果自动含派生属性（avgScore、passRate）。对 Score 结果会补充 studentName 和 courseName。",            "input_schema": {
                 "type": "object",
                 "properties": {
                     "object_type": {
@@ -1046,6 +1072,8 @@ def _build_oag_tool_schemas() -> list[dict]:
                     },
                     "fuzzy": {"type": "boolean", "description": "是否模糊匹配文本属性"},
                     "limit": {"type": "integer", "description": "返回上限（默认 20）"},
+                    "order_by": {"type": "string", "description": "按某属性排序的字段名"},
+                    "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向 asc/desc"},
                 },
                 "required": ["object_type"],
             },
@@ -1106,6 +1134,74 @@ def _build_oag_tool_schemas() -> list[dict]:
     ]
 
 
+def _enrich_score_context(results: list[dict]):
+    """为 Score 对象批量补充 studentName、courseName、teacherName"""
+    if not results or results[0].get("_objectType") != "Score":
+        return
+    # Score 的 student_id / course_id 不在 properties 中，需要从 score 表查 FK
+    obj_ids = [obj["id"] for obj in results if obj.get("id")]
+    if not obj_ids:
+        return
+    conn = get_connection()
+    placeholders = ",".join("?" * len(obj_ids))
+    fk_rows = conn.execute(
+        f"SELECT id, student_id, course_id FROM score WHERE id IN ({placeholders})",
+        tuple(obj_ids)
+    ).fetchall()
+    conn.close()
+    id_to_fk = {r["id"]: (r["student_id"], r["course_id"]) for r in fk_rows}
+    sids = set()
+    cids = set()
+    for obj in results:
+        fk = id_to_fk.get(obj["id"])
+        if fk:
+            sid, cid = fk
+            obj["studentId"] = sid
+            obj["courseId"] = cid
+            if sid:
+                sids.add(sid)
+            if cid:
+                cids.add(cid)
+    # 批量查名称
+    s_names = {}
+    c_names = {}
+    c_teachers = {}
+    if sids:
+        conn = get_connection()
+        placeholders = ",".join("?" * len(sids))
+        rows = conn.execute(f"SELECT id, name FROM student WHERE id IN ({placeholders})", tuple(sids)).fetchall()
+        for r in rows:
+            s_names[r["id"]] = r["name"]
+        conn.close()
+    if cids:
+        conn = get_connection()
+        placeholders = ",".join("?" * len(cids))
+        rows = conn.execute(f"SELECT id, name, teacher_id FROM course WHERE id IN ({placeholders})", tuple(cids)).fetchall()
+        tids = set()
+        for r in rows:
+            c_names[r["id"]] = r["name"]
+            if r["teacher_id"]:
+                tids.add(r["teacher_id"])
+                c_teachers[r["id"]] = r["teacher_id"]
+        if tids:
+            t_placeholders = ",".join("?" * len(tids))
+            t_rows = conn.execute(f"SELECT id, name FROM teacher WHERE id IN ({t_placeholders})", tuple(tids)).fetchall()
+            t_names = {r["id"]: r["name"] for r in t_rows}
+            for cid, tid in c_teachers.items():
+                c_teachers[cid] = t_names.get(tid, f"Teacher#{tid}")
+        conn.close()
+    # 填入结果
+    for obj in results:
+        sid = obj.get("studentId") or obj.get("student_id")
+        cid = obj.get("courseId") or obj.get("course_id")
+        if sid and sid in s_names:
+            obj["studentName"] = s_names[sid]
+        if cid and cid in c_names:
+            obj["courseName"] = c_names[cid]
+            if cid in c_teachers:
+                obj["teacherName"] = c_teachers[cid]
+
+
 def _execute_oag_tool(tool_name: str, inp: dict) -> dict:
     """执行 OAG 工具，返回 {content, summary}。"""
     try:
@@ -1147,10 +1243,16 @@ def _execute_oag_tool(tool_name: str, inp: dict) -> dict:
                 filters = {_PROP_ALIASES.get(k, k): v for k, v in filters.items()}
             fuzzy = inp.get("fuzzy", False)
             limit = min(inp.get("limit", 20), 100)
+            order_by = inp.get("order_by")
+            order_dir = inp.get("order_dir", "asc")
 
-            results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy, limit=limit)
+            results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy,
+                                       limit=limit, order_by=order_by, order_dir=order_dir)
             if not results:
                 return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}"}
+
+            # 对 Score 结果补充关联名称（studentName, courseName, teacherName）
+            _enrich_score_context(results)
 
             lines = [f"找到 {len(results)} 个 {obj_type} 对象："]
             for obj in results[:15]:

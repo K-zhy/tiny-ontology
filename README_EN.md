@@ -200,7 +200,7 @@ ontology/
 |----------|-------------|---------|
 | `ANTHROPIC_BASE_URL` | LLM API URL | `https://api.deepseek.com/anthropic` |
 | `ANTHROPIC_AUTH_TOKEN` | LLM API key | — |
-| `ANTHROPIC_MODEL` | Model name | `deepseek-v4-pro[1m]` |
+| `ANTHROPIC_MODEL` | Model name | `deepseek-v4-flash` |
 
 ## Contributions Welcome
 

@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<script src="/static/vis-network.min.js"></script>
+</head>
+<body>
+<h1 id="status">Testing vis.js...</h1>
+<div id="graph" style="width:400px;height:300px;border:1px solid #ccc;"></div>
+<script>
+var statusEl = document.getElementById('status');
+statusEl.textContent = 'vis type: ' + typeof vis;
+if (typeof vis === 'undefined') {
+  statusEl.textContent = 'ERROR: vis is undefined!';
+} else if (typeof vis.DataSet === 'undefined') {
+  statusEl.textContent = 'ERROR: vis.DataSet is undefined! Available keys: ' + Object.keys(vis).join(', ');
+} else {
+  statusEl.textContent = 'OK: vis.DataSet and vis.Network available';
+  var nodes = new vis.DataSet([
+    {id: 1, label: 'Test Node'}
+  ]);
+  var edges = new vis.DataSet([]);
+  var container = document.getElementById('graph');
+  var network = new vis.Network(container, {nodes: nodes, edges: edges}, {});
+  statusEl.textContent = 'SUCCESS: Graph rendered!';
+}
+if (typeof vis !== 'undefined') {
+  var keys = [];
+  for (var k in vis) keys.push(k);
+  statusEl.textContent += ' | vis keys: ' + keys.join(', ');
+}
+</script>
+</body>
+</html>

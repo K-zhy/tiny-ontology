@@ -202,7 +202,7 @@ ontology/
 |------|------|--------|
 | `ANTHROPIC_BASE_URL` | LLM API 地址 | `https://api.deepseek.com/anthropic` |
 | `ANTHROPIC_AUTH_TOKEN` | LLM API 密钥 | — |
-| `ANTHROPIC_MODEL` | 模型名称 | `deepseek-v4-pro[1m]` |
+| `ANTHROPIC_MODEL` | 模型名称 | `deepseek-v4-flash` |
 
 ## 欢迎贡献
 

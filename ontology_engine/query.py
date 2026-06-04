@@ -350,14 +350,23 @@ def query_objects_v2(
     if where_clauses:
         sql_parts.append("WHERE " + " AND ".join(where_clauses))
 
+    # 判断是否为派生属性排序（派生属性在 Python 层计算，无法用 SQL ORDER BY）
+    order_by_derived = False
     if order_by:
-        prop = next((p for p in obj_def.properties if p.name == order_by), None)
-        col = f"t0.{prop.column}" if prop else order_by
-        direction = "DESC" if order_dir.lower() == "desc" else "ASC"
-        sql_parts.append(f"ORDER BY {col} {direction}")
+        order_prop = next((p for p in obj_def.properties if p.name == order_by), None)
+        if order_prop and order_prop.prop_type == "derived":
+            order_by_derived = True
+        else:
+            col = f"t0.{order_prop.column}" if order_prop and order_prop.column else order_by
+            direction = "DESC" if order_dir.lower() == "desc" else "ASC"
+            sql_parts.append(f"ORDER BY {col} {direction}")
 
-    sql_parts.append("LIMIT ? OFFSET ?")
-    params.extend([limit, offset])
+    if order_by_derived:
+        # 派生属性排序：先取所有匹配行（含安全上限），fill 后 Python 排序再切片
+        sql_parts.append("LIMIT 1000 OFFSET 0")
+    else:
+        sql_parts.append("LIMIT ? OFFSET ?")
+        params.extend([limit, offset])
 
     sql = "\n".join(sql_parts)
 
@@ -376,6 +385,16 @@ def query_objects_v2(
         results.append(obj)
 
     fill_derived_batch(results, object_type)
+
+    # 派生属性排序：fill 完成后在 Python 层排序，再应用 limit/offset
+    if order_by_derived:
+        reverse = order_dir.lower() == "desc"
+        results.sort(
+            key=lambda x: (x.get(order_by) is None, x.get(order_by) or 0),
+            reverse=reverse
+        )
+        results = results[offset: offset + limit]
+
     return results
 
 
