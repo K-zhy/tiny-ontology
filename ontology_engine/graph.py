@@ -296,6 +296,17 @@ class OntologyGraph:
             if ctx:
                 enriched["_context"] = " → ".join(ctx)
 
+        # 自动计算派生属性（avgScore, passRate 等）
+        obj_def = OBJECT_TYPES.get(obj_type)
+        if obj_def:
+            obj_id = props.get("id")
+            if obj_id:
+                from ontology_engine.functions import compute_derived_property
+                for p in obj_def.properties:
+                    if p.prop_type == "derived" and p.name not in enriched:
+                        val = compute_derived_property(obj_type, obj_id, p.name)
+                        enriched[p.name] = val
+
         return enriched
 
 

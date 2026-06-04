@@ -32,14 +32,15 @@ Ontology Semantic Layer
   ├── Link Types:    earnedBy, forCourse, taughtBy
   ├── Action Types:  createScore, updateScore, deleteScore, assignTeacher
   ├── Functions:     getAvgScore, getTopStudents, getPassRate ...
-  └── Interfaces:    Nameable, Scoreable
+  ├── Interfaces:    Nameable, Scoreable
+  └── Object Sets:   TopStudents, PassedCourses
         │
         ▼  Exposure (server.py)
-┌─────────────────────────────────────────────┐
-│  REST API    │  Frontend Graph │  NL Query   │
-│  CRUD endpoints │  vis.js       │  Graph Walk │
-│  /docs       │  Force-directed │  + Batch    │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  REST API    │  Frontend Graph │      NL Query            │
+│  CRUD endpoints │  vis.js       │  OAG Mode (recommended) │
+│  /docs       │  Force-directed │  + Graph Walk + Batch   │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ## Core Concepts
@@ -53,6 +54,7 @@ Ontology Semantic Layer
 | **Action Type** | Write operation (imperative) | createScore (record a grade) |
 | **Function** | Computation & reasoning | getAvgScore (calculate average) |
 | **Interface** | Cross-object capability contract | Nameable (searchable by name) |
+| **Object Set** | Named collection of objects (predefined business rules) | TopStudents (avgScore >= 85) |
 
 ### Three Property Types
 
@@ -72,35 +74,41 @@ All writes must go through Actions. Direct table writes are forbidden.
 
 ## Natural Language Query
 
-Two NL query modes, sharing the underlying in-memory graph engine (`OntologyGraph`).
+Three NL query modes, representing different architectural approaches.
 
-### Graph Walk Mode `POST /ontology/nl-query-graph` (Recommended)
+### OAG Mode `POST /ontology/nl-query-oag` (Recommended)
 
-The LLM explores the graph step-by-step through 7 graph-native tools. Each tool response includes node metadata (available traversals + bound functions), enabling the LLM to dynamically decide the next step:
+**Object-Action-Graph (OAG) Mode**: The LLM declares query intent at the object type level, and the engine automatically compiles SQL JOINs based on Link definitions. **The LLM never touches instance data or traversal logic.**
 
-| Tool | Function |
-|------|----------|
-| `list_object_types` | List all available object types and their metadata |
-| `search_by_semantic` | Cross-type fuzzy search (substring match across all text properties) |
-| `search_objects` | Search by type + property filters (supports exact/fuzzy matching) |
-| `traverse` | Walk along a Link to neighbor nodes |
-| `get_node_detail` | Get full node info including derived properties |
-| `call_function` | Invoke bound functions (average, ranking, etc.) |
-| `execute_action` | Execute write operations (create/update scores, etc.) |
+This aligns with [Palantir AIP's OAG](https://www.palantir.com/docs/foundry/ontology/ontology-augmented-generation): the Ontology serves as a constraint system — the LLM only understands user intent and fills parameters, without orchestrating query execution paths.
+
+| Tool | Function | vs. Traditional |
+|------|----------|-----------------|
+| `query_objects` | **Core**: Cross-link dot-notation filter. e.g. `type="Score", filters={"student.name":"Zhang", "course.name":"Math"}` → engine auto-JOINs tables | Replaces multi-step search + traverse |
+| `query_object_set` | Query a predefined ObjectSet (e.g. TopStudents) | New capability |
+| `list_object_types` | List all types + ObjectSets + relationships | Added ObjectSet info |
+| `get_object_detail` | Get full object details | Takes `(type, id)` instead of `(node_key)` |
+| `call_function` | Invoke compute functions | Same |
+| `execute_action` | Execute write operations | Same |
+
+**Key difference**: No `traverse` tool. Link traversal moves from the LLM's decision space into the engine's compilation space. Query results automatically include derived properties (avgScore, passRate).
+
+### Graph Walk Mode `POST /ontology/nl-query-graph`
+
+The LLM explores the **instance graph** step-by-step through 7 graph-native tools. Useful for comparison and understanding how LLM agents navigate graphs.
 
 ### Batch Planning Mode `POST /ontology/nl-query`
 
-The LLM outputs a complete JSON operation sequence in one shot. The engine executes it step by step, then generates a natural language answer.
+The LLM outputs a complete JSON operation sequence. The engine executes sequentially.
 
-### Example Queries
+### Query Comparison
 
-| Query | Steps | Path |
-|-------|-------|------|
-| "What's Zhang San's average score?" | 2 | search_objects → call_function getAvgScore |
-| "Who got the highest in Advanced Mathematics?" | 3 | search_objects → traverse scores → call_function getTopStudents |
-| "Find anything computer-related" | 1 | search_by_semantic("计算机") |
-| "What object types are available?" | 1 | list_object_types |
-| "Record Zhang San's Advanced Math score as 85" | 1 | execute_action createScore |
+| Query | OAG Mode (Recommended) | Graph Walk Mode |
+|-------|----------------------|-----------------|
+| "Zhang San's Advanced Math score" | **1 step**: `query_objects(Score, {student.name, course.name})` | 8 steps: search → traverse scores → traverse each to course |
+| "Who are the top students?" | **1 step**: `query_object_set("TopStudents")` | Not supported (no ObjectSet) |
+| "Zhang San's average score" | **1 step**: `query_objects(Student, {name})`, avgScore included | 2 steps: search → call_function |
+| "What types are available?" | 1 step: `list_object_types` | 1 step: `list_object_types` |
 
 ## API Endpoints
 
@@ -128,12 +136,20 @@ The LLM outputs a complete JSON operation sequence in one shot. The engine execu
 | GET | `/ontology/functions/{funcName}` | Call a Function |
 | POST | `/ontology/actions/{actionName}` | Execute an Action |
 
+### ObjectSet
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/ontology/object-sets` | List all ObjectSet definitions |
+| GET | `/ontology/object-sets/{name}` | Query objects in an ObjectSet |
+
 ### Natural Language Query
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/ontology/nl-query-graph` | Graph Walk mode (recommended) |
-| POST | `/ontology/nl-query` | Batch Planning mode |
+| POST | `/ontology/nl-query-oag` | **OAG Mode (recommended)** — type-level query with engine-compiled JOINs |
+| POST | `/ontology/nl-query-graph` | Graph Walk mode — LLM agent explores instance graph |
+| POST | `/ontology/nl-query` | Batch Planning mode — LLM outputs JSON operation sequence |
 
 ## Project Structure
 
@@ -145,7 +161,7 @@ ontology/
 │   └── index.html                  # Single-page frontend (vis.js force-directed graph + NL query)
 ├── ontology_engine/
 │   ├── schema.py                   # Core dataclass definitions
-│   ├── registry.py                 # Mapping config hub (add new Object/Link/Action/Function here)
+│   ├── registry.py                 # Mapping config hub (Object/Link/Action/Function/ObjectSet)
 │   ├── database.py                 # SQLite connection management + table creation
 │   ├── graph.py                    # In-memory graph engine (adjacency list, O(1) traversal)
 │   ├── query.py                    # Query engine (semantic operations → SQL translation)

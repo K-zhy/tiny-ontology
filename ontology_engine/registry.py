@@ -9,6 +9,7 @@ from ontology_engine.schema import (
     ActionTypeDef, ParamDef,
     FunctionDef,
     InterfaceDef,
+    ObjectSetDef,
 )
 
 # ============================================================
@@ -288,5 +289,32 @@ INTERFACES: dict[str, InterfaceDef] = {
         shared_properties=[],
         shared_functions=["getScoreSummary"],
         implementors=["Student", "Course"],
+    ),
+}
+
+# ============================================================
+# Object Sets
+# ============================================================
+
+OBJECT_SETS: dict[str, ObjectSetDef] = {
+    "TopStudents": ObjectSetDef(
+        api_name="TopStudents",
+        display_name="优秀学生",
+        object_type="Student",
+        description="平均分 >= 85 的优秀学生",
+        sql="""
+            SELECT id FROM student
+            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE student_id = student.id) >= 85
+        """,
+    ),
+    "PassedCourses": ObjectSetDef(
+        api_name="PassedCourses",
+        display_name="及格课程",
+        object_type="Course",
+        description="课程平均分 >= 60 的及格课程",
+        sql="""
+            SELECT id FROM course
+            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE course_id = course.id) >= 60
+        """,
     ),
 }

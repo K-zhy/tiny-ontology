@@ -89,3 +89,15 @@ class InterfaceDef:
     shared_properties: list[str]  # 共享属性名列表
     shared_functions: list[str]   # 共享 Function 的 api_name
     implementors: list[str]       # 实现该 Interface 的 Object Type api_name
+
+
+# ---- Object Set ----
+
+@dataclass
+class ObjectSetDef:
+    """ObjectSet 定义 — 具名、可复用的对象集合"""
+    api_name: str               # "TopStudents"
+    display_name: str           # "优秀学生"
+    object_type: str            # "Student" — 集合中对象的类型
+    description: str            # "平均分 >= 85 的学生"
+    sql: str                    # SQL 查询，返回该类型的主键 id 列表

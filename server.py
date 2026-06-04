@@ -14,8 +14,8 @@ from pydantic import BaseModel
 from typing import Optional
 
 from ontology_engine.database import init_db
-from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, ACTION_TYPES, FUNCTIONS, INTERFACES
-from ontology_engine.query import get_object, query_objects, traverse_link
+from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, ACTION_TYPES, FUNCTIONS, INTERFACES, OBJECT_SETS
+from ontology_engine.query import get_object, query_objects, traverse_link, query_objects_v2, query_object_set, fill_derived_batch
 from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
 from ontology_engine.graph import get_graph, reload_graph
@@ -156,6 +156,33 @@ def api_execute_action(action_name: str, req: ActionRequest):
     result = execute_action(action_name, req.params)
     if not result.get("success"):
         raise HTTPException(400, result.get("error", "Action failed"))
+    return result
+
+
+# ============================================================
+# ObjectSet API
+# ============================================================
+
+@app.get("/ontology/object-sets")
+def api_list_object_sets():
+    """列出所有 ObjectSet 定义"""
+    result = {}
+    for name, os_def in OBJECT_SETS.items():
+        result[name] = {
+            "apiName": os_def.api_name,
+            "displayName": os_def.display_name,
+            "objectType": os_def.object_type,
+            "description": os_def.description,
+        }
+    return result
+
+
+@app.get("/ontology/object-sets/{set_name}")
+def api_query_object_set(set_name: str, limit: int = Query(50)):
+    """查询 ObjectSet 中的对象"""
+    result = query_object_set(set_name, limit=limit)
+    if not result.get("success"):
+        raise HTTPException(404, result.get("error", "ObjectSet not found"))
     return result
 
 
@@ -883,6 +910,319 @@ def _format_node_for_llm(graph, node: dict, detail: bool = False) -> str:
             lines.append("  [遍历] " + ", ".join(trav_names[:5]))
 
     return "\n".join(lines)
+
+
+# ============================================================
+# OAG 模式 NL 查询（Object-Action-Graph：类型层查询，非实例图游走）
+# ============================================================
+
+
+@app.post("/ontology/nl-query-oag")
+async def api_nl_query_oag(req: dict):
+    """OAG 模式自然语言查询：LLM 在对象类型层操作，引擎负责 Link JOIN 编译。"""
+    query_text = req.get("query", "")
+    max_iterations = req.get("max_iterations", 20)
+
+    system_prompt = _build_oag_system_prompt()
+    tool_schemas = _build_oag_tool_schemas()
+
+    messages = [{"role": "user", "content": query_text}]
+    exploration_log = []
+    final_answer = None
+
+    for iteration in range(max_iterations):
+        resp = await _call_llm_graph(system_prompt, tool_schemas, messages)
+        content_blocks = resp.get("content", [])
+
+        tool_use_blocks = [b for b in content_blocks if b.get("type") == "tool_use"]
+        text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
+
+        if tool_use_blocks:
+            messages.append({"role": "assistant", "content": content_blocks})
+            tool_results_content = []
+
+            for tool in tool_use_blocks:
+                tool_name = tool["name"]
+                tool_input = tool.get("input", {})
+                tool_id = tool.get("id", "")
+                tool_result = _execute_oag_tool(tool_name, tool_input)
+
+                exploration_log.append({
+                    "step": iteration + 1,
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "summary": tool_result["summary"],
+                })
+
+                tool_results_content.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "content": tool_result["content"],
+                })
+
+            if iteration + 1 >= 2:
+                hint = "\n\n[数据应该足够了。请直接用中文简短回答用户问题，不要再调工具。]"
+                if tool_results_content:
+                    tool_results_content[-1]["content"] += hint
+
+            messages.append({"role": "user", "content": tool_results_content})
+            continue
+
+        if text_parts:
+            final_answer = "".join(text_parts)
+        elif exploration_log:
+            steps_desc = "; ".join(
+                f"步骤{s['step']}: {s['tool']} → {s['summary']}"
+                for s in exploration_log
+            )
+            final_answer = f"查询完成（{len(exploration_log)} 步）：{steps_desc}"
+        else:
+            final_answer = "无法生成回答"
+        break
+
+    if final_answer is None:
+        final_answer = "未找到相关信息"
+
+    return {
+        "success": True,
+        "answer": final_answer,
+        "exploration_log": exploration_log,
+    }
+
+
+def _build_oag_system_prompt() -> str:
+    schema = _build_llm_context()
+    return f"""你是一个 Ontology 对象查询助手。系统使用 Object-Action-Graph（OAG）模式，所有数据建模为业务对象（Student、Course、Score、Teacher），对象间通过 Link 关联。
+
+## 核心原则
+1. 你通过 **query_objects** 在类型层面声明查询意图，用属性过滤条件返回结果。不要遍历实例图。
+2. 对象属性支持**跨 Link 点号过滤**（如 filters={{{{ "student.name": "张三", "course.name": "数学" }}}}），系统自动处理跨表 JOIN。
+3. 查询结果**自动包含派生属性**（avgScore、passRate），无需额外调用函数获取。
+4. 预定义的 ObjectSet 通过 **query_object_set** 引用，如 TopStudents、PassedCourses。
+5. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
+
+## Schema
+
+{schema}
+
+## ObjectSets（预定义集合）
+- **TopStudents**: 平均分 >= 85 的优秀学生
+- **PassedCourses**: 课程平均分 >= 60 的及格课程
+
+## 查询示例
+- "张三的数学成绩" → query_objects(type="Score", filters={{{{ "student.name": "张三", "course.name": "数学" }}}})
+- "优秀学生有哪些" → query_object_set(set_name="TopStudents")
+- "张三的平均分" → query_objects(type="Student", filters={{{{ "name": "张三" }}}})，结果含 avgScore
+- "数学课谁最高分" → 先 query_objects 找 Course id，再 call_function getTopStudents
+- "有哪些类型的对象" → list_object_types
+
+## 规则
+- 得到足够信息后立即回答，不要继续深挖
+- 找不到就说没找到，不编造数据
+- 跨 Link 过滤优先用点号语法，而非多步查询"""
+
+
+def _build_oag_tool_schemas() -> list[dict]:
+    return [
+        {
+            "name": "list_object_types",
+            "description": "列出系统中所有可用的对象类型、ObjectSet、属性、Link 关系、绑定函数。",
+            "input_schema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "name": "query_objects",
+            "description": "在类型层面查询对象，支持跨 Link 点号过滤。例如查询成绩时过滤 student.name='张三'、course.name='数学'。结果自动含派生属性（avgScore、passRate）。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": ["Student", "Teacher", "Course", "Score"],
+                        "description": "要查询的对象类型",
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": "过滤条件。直接属性: {\"name\": \"张三\"}。跨 Link 点号: {\"student.name\": \"张三\", \"course.name\": \"数学\"}。",
+                    },
+                    "fuzzy": {"type": "boolean", "description": "是否模糊匹配文本属性"},
+                    "limit": {"type": "integer", "description": "返回上限（默认 20）"},
+                },
+                "required": ["object_type"],
+            },
+        },
+        {
+            "name": "query_object_set",
+            "description": "查询预定义的 ObjectSet（具名对象集合）。可用: TopStudents(优秀学生)、PassedCourses(及格课程)。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "set_name": {
+                        "type": "string",
+                        "enum": ["TopStudents", "PassedCourses"],
+                        "description": "ObjectSet 名称",
+                    },
+                    "filters": {"type": "object", "description": "在集合结果上额外过滤"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["set_name"],
+            },
+        },
+        {
+            "name": "get_object_detail",
+            "description": "获取单个对象的完整详情（含派生属性）。参数是对象类型+ID，不是节点标识。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {"type": "string", "enum": ["Student", "Teacher", "Course", "Score"]},
+                    "object_id": {"type": "integer", "description": "对象的数字 ID"},
+                },
+                "required": ["object_type", "object_id"],
+            },
+        },
+        {
+            "name": "call_function",
+            "description": "调用系统预定义的计算函数。可选: getAvgScore、getCourseAvgScore、getPassRate、getTopStudents、getAllCourseAvgScores、searchByName、getScoreSummary。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "function_name": {"type": "string", "description": "函数名"},
+                    "params": {"type": "object", "description": "函数参数"},
+                },
+                "required": ["function_name"],
+            },
+        },
+        {
+            "name": "execute_action",
+            "description": "执行数据写入操作: createScore、updateScore、deleteScore、assignTeacher。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action_name": {"type": "string", "enum": ["createScore", "updateScore", "deleteScore", "assignTeacher"]},
+                    "params": {"type": "object", "description": "操作参数"},
+                },
+                "required": ["action_name"],
+            },
+        },
+    ]
+
+
+def _execute_oag_tool(tool_name: str, inp: dict) -> dict:
+    """执行 OAG 工具，返回 {content, summary}。"""
+    try:
+        if tool_name == "list_object_types":
+            types_info = []
+            for type_name, obj_def in OBJECT_TYPES.items():
+                props = [
+                    {"name": p.name, "type": p.prop_type, "dataType": p.data_type}
+                    for p in obj_def.properties
+                ]
+                out_links = [
+                    {"name": l.api_name, "target": l.target_type, "display": l.display_name}
+                    for l in LINK_TYPES.values() if l.source_type == type_name
+                ]
+                in_links = [
+                    {"name": l.reverse_name, "target": l.source_type, "display": f"反向{l.display_name}"}
+                    for l in LINK_TYPES.values() if l.target_type == type_name
+                ]
+                bound_funcs = [f.api_name for f in FUNCTIONS.values() if f.bound_object == type_name]
+                types_info.append({
+                    "type": type_name, "display": obj_def.display_name,
+                    "properties": props,
+                    "links": out_links + in_links,
+                    "functions": bound_funcs,
+                })
+            set_info = [
+                {"name": s.api_name, "display": s.display_name,
+                 "type": s.object_type, "description": s.description}
+                for s in OBJECT_SETS.values()
+            ]
+            content = json.dumps({"object_types": types_info, "object_sets": set_info}, ensure_ascii=False)
+            return {"content": content, "summary": f"listed {len(types_info)} types, {len(set_info)} sets"}
+
+        elif tool_name == "query_objects":
+            obj_type = _TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
+            filters = inp.get("filters", {})
+            # 翻译中文属性名
+            if filters:
+                filters = {_PROP_ALIASES.get(k, k): v for k, v in filters.items()}
+            fuzzy = inp.get("fuzzy", False)
+            limit = min(inp.get("limit", 20), 100)
+
+            results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy, limit=limit)
+            if not results:
+                return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}"}
+
+            lines = [f"找到 {len(results)} 个 {obj_type} 对象："]
+            for obj in results[:15]:
+                parts = []
+                obj_name = obj.get("name", "")
+                for k, v in obj.items():
+                    if k.startswith("_") or k == "name":
+                        continue
+                    parts.append(f"{k}={v}")
+                label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
+                lines.append(f"  {obj_type}#{obj.get('id', '?')} '{label}': {', '.join(parts[:8])}")
+            if len(results) > 15:
+                lines.append(f"  ...及其他 {len(results) - 15} 个结果")
+            return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}"}
+
+        elif tool_name == "query_object_set":
+            set_name = inp.get("set_name", "")
+            filters = inp.get("filters", {})
+            if filters:
+                filters = {_PROP_ALIASES.get(k, k): v for k, v in filters.items()}
+            limit = min(inp.get("limit", 20), 100)
+
+            result = query_object_set(set_name, filters=filters, limit=limit)
+            if not result.get("success"):
+                return {"content": f"ObjectSet 错误: {result.get('error')}", "summary": "error"}
+
+            results = result["data"]
+            set_def = OBJECT_SETS.get(set_name)
+            obj_type = set_def.object_type if set_def else "unknown"
+            lines = [f"{set_def.display_name if set_def else set_name} 包含 {len(results)} 个 {obj_type}："]
+            for obj in results[:15]:
+                parts = []
+                obj_name = obj.get("name", "")
+                for k, v in obj.items():
+                    if k.startswith("_") or k == "name":
+                        continue
+                    parts.append(f"{k}={v}")
+                label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
+                lines.append(f"  {label}: {', '.join(parts[:8])}")
+            return {"content": "\n".join(lines), "summary": f"set {set_name}: {len(results)} results"}
+
+        elif tool_name == "get_object_detail":
+            obj_type = _TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
+            obj_id = inp.get("object_id", 0)
+            obj = get_object(obj_type, obj_id)
+            if obj is None:
+                return {"content": f"{obj_type} id={obj_id} 不存在", "summary": "not found"}
+            fill_derived_batch([obj], obj_type)
+            lines = [f"{obj_type}#{obj_id} '{obj.get('name', '')}'"]
+            for k, v in obj.items():
+                if not k.startswith("_"):
+                    lines.append(f"  {k}: {v}")
+            return {"content": "\n".join(lines), "summary": f"detail {obj_type}#{obj_id}"}
+
+        elif tool_name == "call_function":
+            func_name = inp.get("function_name", "")
+            params = inp.get("params", {})
+            result = call_function(func_name, params)
+            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"called {func_name}"}
+
+        elif tool_name == "execute_action":
+            action_name = inp.get("action_name", "")
+            params = inp.get("params", {})
+            result = execute_action(action_name, params)
+            if result.get("success"):
+                reload_graph()
+            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"executed {action_name}"}
+
+        return {"content": f"未知工具: {tool_name}", "summary": "unknown tool"}
+
+    except Exception as e:
+        return {"content": f"工具执行错误: {e}", "summary": "error"}
 
 
 # ============================================================

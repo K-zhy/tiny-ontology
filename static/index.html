@@ -107,15 +107,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
     <div class="nl-section">
       <h3>🔍 自然语言查询
         <span class="mode-toggle">
-          <button id="btn-mode-graph" class="mode-btn active" onclick="switchNlMode('graph')">图谱游走</button>
+          <button id="btn-mode-oag" class="mode-btn active" onclick="switchNlMode('oag')">OAG</button>
+          <button id="btn-mode-graph" class="mode-btn" onclick="switchNlMode('graph')">图谱游走</button>
           <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">批量规划</button>
         </span>
       </h3>
       <div class="nl-input">
-        <input id="nlInput" placeholder="例：查张三所有课程的平均分" onkeydown="if(event.key==='Enter')nlQuery()">
+        <input id="nlInput" placeholder="例：张三高等数学多少分" onkeydown="if(event.key==='Enter')nlQuery()">
         <button id="nlBtn" onclick="nlQuery()">查询</button>
       </div>
-      <div class="nl-hints">试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率  · 录入成绩</div>
+      <div class="nl-hints">OAG（类型层查询）· 试试：张三高等数学多少分 · 优秀学生有哪些 · 张三的平均分</div>
       <div id="answerBox" class="answer-box"></div>
       <div id="explorationLog" class="exploration-log" style="display:none;"></div>
     </div>
@@ -184,7 +185,7 @@ let schemaData = { nodes: [], edges: [] };     // 类型层数据
 let schemaMeta = null;                         // Schema 元数据
 let currentView = 'schema';
 let instanceFilter = 'all';
-let nlQueryMode = 'graph';  // 'graph' | 'batch'
+let nlQueryMode = 'oag';  // 'oag' | 'graph' | 'batch'
 let network = null;
 const colors = { Student: '#1890ff', Teacher: '#52c41a', Course: '#fa8c16', Score: '#e94560', Interface: '#722ed1' };
 
@@ -461,7 +462,12 @@ async function nlQuery() {
   document.getElementById('explorationLog').style.display = 'none';
   document.getElementById('explorationLog').innerHTML = '';
 
-  const endpoint = nlQueryMode === 'graph' ? '/ontology/nl-query-graph' : '/ontology/nl-query';
+  const endpoints = {
+    'oag': '/ontology/nl-query-oag',
+    'graph': '/ontology/nl-query-graph',
+    'batch': '/ontology/nl-query'
+  };
+  const endpoint = endpoints[nlQueryMode] || endpoints.oag;
 
   try {
     const resp = await fetch(endpoint, {
@@ -478,7 +484,10 @@ async function nlQuery() {
       box.textContent = data.answer;
     }
 
-    if (nlQueryMode === 'graph') {
+    if (nlQueryMode === 'oag') {
+      // OAG 模式：显示探索日志
+      renderOagExploration(data.exploration_log || []);
+    } else if (nlQueryMode === 'graph') {
       // 图谱模式：显示探索路径 + 动画
       renderExplorationPath(data.exploration_path || []);
     } else {
@@ -496,10 +505,48 @@ async function nlQuery() {
 
 function switchNlMode(mode) {
   nlQueryMode = mode;
+  document.getElementById('btn-mode-oag').classList.toggle('active', mode === 'oag');
   document.getElementById('btn-mode-graph').classList.toggle('active', mode === 'graph');
   document.getElementById('btn-mode-batch').classList.toggle('active', mode === 'batch');
   document.getElementById('explorationLog').style.display = 'none';
   document.getElementById('explorationLog').innerHTML = '';
+
+  // 更新 placeholder 和 hints
+  const input = document.getElementById('nlInput');
+  const hints = document.getElementsByClassName('nl-hints')[0];
+  if (mode === 'oag') {
+    input.placeholder = '例：张三高等数学多少分';
+    hints.textContent = 'OAG（类型层查询）· 试试：张三高等数学多少分 · 优秀学生有哪些 · 张三的平均分';
+  } else if (mode === 'graph') {
+    input.placeholder = '例：查张三所有课程的平均分';
+    hints.textContent = '图谱游走（实例探索）· 试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率';
+  } else {
+    input.placeholder = '例：查张三所有课程的平均分';
+    hints.textContent = '批量规划（JSON 计划）· 试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率';
+  }
+}
+
+function renderOagExploration(log) {
+  const logEl = document.getElementById('explorationLog');
+  logEl.style.display = 'block';
+
+  if (!log || log.length === 0) {
+    logEl.innerHTML = '<div style="color:#999;">无探索步骤（直接回答）</div>';
+    return;
+  }
+
+  let html = '<div style="font-weight:600;margin-bottom:4px;color:#1890ff;">⚡ OAG 查询日志 (' + log.length + ' 步)</div>';
+  log.forEach((step, i) => {
+    html += `<div class="exploration-step">
+      <div class="step-num">${i+1}</div>
+      <div class="step-info">
+        <div class="step-tool">${step.tool}</div>
+        <div class="step-input">${JSON.stringify(step.input)}</div>
+        <div class="step-summary">→ ${step.summary}</div>
+      </div>
+    </div>`;
+  });
+  logEl.innerHTML = html;
 }
 
 function renderExplorationPath(path) {
