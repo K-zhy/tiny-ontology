@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ontology Demo — 学生成绩管理系统</title>
+<script src="/static/vis-network.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+
+.header { background: #1a1a2e; color: #fff; padding: 12px 24px; font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 12px; }
+.header .badge { background: #e94560; font-size: 12px; padding: 2px 8px; border-radius: 10px; }
+
+.main { display: flex; flex: 1; overflow: hidden; }
+
+/* ---- 左侧图谱 ---- */
+.graph-panel { flex: 1; background: #fff; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+.graph-toolbar { padding: 8px 12px; border-bottom: 1px solid #eee; display: flex; gap: 6px; flex-wrap: wrap; }
+.graph-toolbar button { padding: 4px 12px; border: 1px solid #d9d9d9; border-radius: 4px; background: #fff; cursor: pointer; font-size: 12px; }
+.graph-toolbar button:hover { border-color: #1890ff; color: #1890ff; }
+.graph-toolbar button.active { background: #1890ff; color: #fff; border-color: #1890ff; }
+#graph-container { flex: 1; min-height: 400px; border: 1px solid #f0f0f0; }
+
+/* ---- 右侧面板 ---- */
+.right-panel { width: 420px; display: flex; flex-direction: column; overflow-y: auto; padding: 16px; gap: 16px; }
+
+.nl-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.nl-section h3 { font-size: 14px; margin-bottom: 8px; color: #333; display: flex; align-items: center; justify-content: space-between; }
+.nl-input { display: flex; gap: 8px; }
+.nl-input input { flex: 1; padding: 8px 12px; border: 1px solid #d9d9d9; border-radius: 6px; font-size: 14px; }
+.nl-input button { padding: 8px 16px; background: #1890ff; color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.nl-input button:hover { background: #1677cc; }
+.nl-input button:disabled { background: #bbb; cursor: not-allowed; }
+.nl-hints { font-size: 11px; color: #999; margin-top: 8px; }
+
+.answer-box { background: #f6ffed; border: 1px solid #b7eb8f; border-radius: 6px; padding: 12px; font-size: 14px; margin-top: 8px; display: none; }
+
+.section-title { font-size: 13px; font-weight: 600; color: #666; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+
+/* ---- 操作面板 ---- */
+.actions-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+.action-card { border: 1px solid #f0f0f0; border-radius: 6px; padding: 12px; margin-bottom: 8px; }
+.action-card h4 { font-size: 13px; margin-bottom: 8px; color: #333; }
+.action-card .fields { display: flex; flex-wrap: wrap; gap: 6px; }
+.action-card input { width: 100px; padding: 4px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 12px; }
+.action-card button { padding: 4px 14px; background: #52c41a; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.action-card button:hover { background: #49aa19; }
+
+/* ---- 结果区 ---- */
+.result-section { background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); min-height: 100px; }
+.result-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.result-table th { background: #fafafa; padding: 6px 8px; text-align: left; border-bottom: 2px solid #f0f0f0; color: #666; }
+.result-table td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
+.badge-tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; }
+.badge-pass { background: #f6ffed; color: #52c41a; }
+.badge-fail { background: #fff2f0; color: #ff4d4f; }
+
+.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #f3f3f3; border-top: 2px solid #1890ff; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---- 模式切换 ---- */
+.mode-toggle { display: inline-flex; gap: 4px; margin-right: 8px; align-items: center; }
+.mode-btn { padding: 6px 12px; border: 1px solid #d9d9d9; border-radius: 6px; background: #fff; color: #666; font-size: 12px; cursor: pointer; transition: all 0.2s; white-space: nowrap; }
+.mode-btn:hover { border-color: #1890ff; color: #1890ff; }
+.mode-btn.active { background: #1890ff; border-color: #1890ff; color: #fff; }
+
+/* ---- 探索步骤日志 ---- */
+.exploration-log { margin-top: 8px; padding: 8px; background: #f9f9f9; border-radius: 6px; font-size: 11px; max-height: 200px; overflow-y: auto; }
+.exploration-step { display: flex; align-items: flex-start; gap: 8px; padding: 4px 0; border-bottom: 1px solid #f0f0f0; animation: fadeIn 0.3s ease; }
+.exploration-step:last-child { border-bottom: none; }
+.exploration-step .step-num { background: #1890ff; color: #fff; border-radius: 50%; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; flex-shrink: 0; }
+.exploration-step .step-info { flex: 1; }
+.exploration-step .step-tool { font-weight: 600; color: #333; }
+.exploration-step .step-input { color: #999; font-size: 10px; }
+.exploration-step .step-summary { color: #52c41a; font-size: 11px; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<div class="header">
+  Ontology Demo <span class="badge">语义层</span> 学生成绩管理系统
+  <span style="font-size:12px;color:#888;margin-left:auto;">Object · Link · Action · Function</span>
+</div>
+
+<div class="main">
+  <!-- 左侧：知识图谱 -->
+  <div class="graph-panel">
+    <div class="graph-toolbar">
+      <button id="btn-schema" class="active" onclick="switchView('schema')">类型视图</button>
+      <button id="btn-instance" onclick="switchView('instance')">实例视图</button>
+      <span style="margin: 0 8px; color: #ddd;">|</span>
+      <button id="btn-filter-all" class="instance-only active" onclick="filterGraph('all')" style="display:none">全部</button>
+      <button id="btn-filter-student" class="instance-only" onclick="filterGraph('Student')" style="color:#1890ff;display:none">● 学生</button>
+      <button id="btn-filter-teacher" class="instance-only" onclick="filterGraph('Teacher')" style="color:#52c41a;display:none">● 教师</button>
+      <button id="btn-filter-course" class="instance-only" onclick="filterGraph('Course')" style="color:#fa8c16;display:none">● 课程</button>
+      <button id="btn-filter-score" class="instance-only" onclick="filterGraph('Score')" style="color:#e94560;display:none">● 成绩</button>
+      <span class="instance-only" style="margin-left:8px;font-size:11px;color:#999;display:none">点击节点展开关系 · 滚轮缩放 · 拖拽移动</span>
+    </div>
+    <div id="graph-container"></div>
+  </div>
+
+  <!-- 右侧面板 -->
+  <div class="right-panel">
+    <!-- 自然语言查询 -->
+    <div class="nl-section">
+      <h3>🔍 自然语言查询
+        <span class="mode-toggle">
+          <button id="btn-mode-graph" class="mode-btn active" onclick="switchNlMode('graph')">图谱游走</button>
+          <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">批量规划</button>
+        </span>
+      </h3>
+      <div class="nl-input">
+        <input id="nlInput" placeholder="例：查张三所有课程的平均分" onkeydown="if(event.key==='Enter')nlQuery()">
+        <button id="nlBtn" onclick="nlQuery()">查询</button>
+      </div>
+      <div class="nl-hints">试试：查张三的成绩 · 高等数学谁考了最高分 · 数据结构通过率  · 录入成绩</div>
+      <div id="answerBox" class="answer-box"></div>
+      <div id="explorationLog" class="exploration-log" style="display:none;"></div>
+    </div>
+
+    <!-- Functions 面板 -->
+    <div class="actions-section">
+      <div class="section-title">⚡ Functions <span style="font-weight:400;font-size:11px;color:#999;" id="func-count"></span></div>
+      <div id="functions-list"></div>
+    </div>
+
+    <!-- 操作面板 -->
+    <div class="actions-section">
+      <div class="section-title">⚡ Actions</div>
+
+      <div class="action-card">
+        <h4>录入成绩 (createScore)</h4>
+        <div class="fields">
+          <input id="cs_student" placeholder="学生ID">
+          <input id="cs_course" placeholder="课程ID">
+          <input id="cs_score" placeholder="分数">
+          <input id="cs_date" placeholder="日期(如2024-06-15)">
+          <button onclick="doAction('createScore')">执行</button>
+        </div>
+      </div>
+
+      <div class="action-card">
+        <h4>修改成绩 (updateScore)</h4>
+        <div class="fields">
+          <input id="us_id" placeholder="成绩ID">
+          <input id="us_score" placeholder="新分数">
+          <button onclick="doAction('updateScore')">执行</button>
+        </div>
+      </div>
+
+      <div class="action-card" style="display:flex;gap:8px;">
+        <div style="flex:1">
+          <h4>分配教师 (assignTeacher)</h4>
+          <div class="fields">
+            <input id="at_course" placeholder="课程ID">
+            <input id="at_teacher" placeholder="教师ID">
+            <button onclick="doAction('assignTeacher')">执行</button>
+          </div>
+        </div>
+        <div style="flex:1">
+          <h4>删除成绩 (deleteScore)</h4>
+          <div class="fields">
+            <input id="ds_id" placeholder="成绩ID">
+            <button onclick="doAction('deleteScore')" style="background:#ff4d4f">执行</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 查询结果 -->
+    <div class="result-section">
+      <div class="section-title">📊 查询结果</div>
+      <div id="results"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ======================== 图谱 ========================
+let graphData = { nodes: [], edges: [] };      // 实例数据
+let schemaData = { nodes: [], edges: [] };     // 类型层数据
+let schemaMeta = null;                         // Schema 元数据
+let currentView = 'schema';
+let instanceFilter = 'all';
+let nlQueryMode = 'graph';  // 'graph' | 'batch'
+let network = null;
+const colors = { Student: '#1890ff', Teacher: '#52c41a', Course: '#fa8c16', Score: '#e94560', Interface: '#722ed1' };
+
+async function loadGraph() {
+  try {
+    const [schemaResp, instanceResp, metaResp] = await Promise.all([
+      fetch('/ontology/graph/schema'),
+      fetch('/ontology/graph'),
+      fetch('/ontology/schema')
+    ]);
+    if (!schemaResp.ok || !instanceResp.ok) throw new Error('HTTP error');
+    schemaData = await schemaResp.json();
+    graphData = await instanceResp.json();
+    schemaMeta = await metaResp.json();
+    renderSchemaGraph();
+    renderFunctionsPanel();
+  } catch(e) {
+    document.getElementById('graph-container').innerHTML =
+      '<div style="padding:40px;text-align:center;color:#ff4d4f;">图谱加载失败: ' + e.message + '</div>';
+    console.error('Graph load error:', e);
+  }
+}
+
+function switchView(view) {
+  currentView = view;
+  instanceFilter = 'all';
+
+  document.getElementById('btn-schema').classList.toggle('active', view === 'schema');
+  document.getElementById('btn-instance').classList.toggle('active', view === 'instance');
+  document.querySelectorAll('.instance-only').forEach(el => {
+    el.style.display = view === 'instance' ? '' : 'none';
+  });
+
+  if (view === 'schema') {
+    renderSchemaGraph();
+  } else {
+    renderInstanceGraph('all');
+  }
+}
+
+function renderSchemaGraph() {
+  const nodes = new vis.DataSet(
+    schemaData.nodes.map(n => {
+      // Interface 节点保持 API 返回的样式；Object Type 节点计算 Function 数量
+      if (n.group === 'Interface') return n;
+      const funcCount = schemaMeta && schemaMeta.functions
+        ? Object.values(schemaMeta.functions).filter(f => f.boundObject === n.group).length : 0;
+      return {
+        ...n,
+        label: n.label + (funcCount > 0 ? '\n⚡' + funcCount + ' Functions' : ''),
+        color: { background: colors[n.group] || '#999', border: '#555' },
+      };
+    })
+  );
+
+  const edges = new vis.DataSet(schemaData.edges);
+
+  const container = document.getElementById('graph-container');
+  const options = {
+    physics: { enabled: true, solver: 'forceAtlas2Based',
+      forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.01, springLength: 200 }
+    },
+    interaction: { hover: true },
+  };
+
+  if (network) { network.destroy(); }
+  network = new vis.Network(container, { nodes, edges }, options);
+
+  network.on('doubleClick', function(params) {
+    if (params.nodes.length > 0) {
+      const nodeId = params.nodes[0];
+      // Interface 节点不响应双击
+      if (nodeId.startsWith('Interface-')) return;
+      const typeName = nodeId.replace('Type-', '');
+      switchView('instance');
+      instanceFilter = typeName;
+      renderInstanceGraph(typeName);
+      document.querySelectorAll('.instance-only').forEach(b => b.classList.remove('active'));
+      const btnId = 'btn-filter-' + typeName.toLowerCase();
+      const btn = document.getElementById(btnId);
+      if (btn) btn.classList.add('active');
+    }
+  });
+}
+
+function renderInstanceGraph(filter) {
+  const filteredNodes = graphData.nodes.filter(
+    n => !filter || filter === 'all' || n.group === filter
+  );
+
+  const nodes = new vis.DataSet(
+    filteredNodes.map(n => ({
+      ...n, color: colors[n.group], shape: 'dot', size: 18,
+      font: { size: 11, color: '#333' }
+    }))
+  );
+
+  const nodeIds = new Set(filteredNodes.map(n => n.id));
+  const edges = new vis.DataSet(
+    graphData.edges
+      .filter(e => nodeIds.has(e.from) && nodeIds.has(e.to))
+      .map(e => ({
+        ...e, arrows: 'to',
+        color: { opacity: 0.4 },
+        font: { size: 9, color: '#999', strokeWidth: 0 }
+      }))
+  );
+
+  const container = document.getElementById('graph-container');
+  const options = {
+    physics: { stabilization: { iterations: 100 }, solver: 'forceAtlas2Based' },
+    interaction: { hover: true, tooltipDelay: 200 },
+  };
+
+  if (network) { network.destroy(); }
+  network = new vis.Network(container, { nodes, edges }, options);
+
+  network.on('click', function(params) {
+    if (params.nodes.length > 0) {
+      expandNode(params.nodes[0]);
+    }
+  });
+}
+
+// ======================== Functions 面板 ========================
+function renderFunctionsPanel() {
+  if (!schemaMeta || !schemaMeta.functions) return;
+  const funcs = schemaMeta.functions;
+  // 按 boundObject 分组
+  const grouped = {};
+  for (const [name, f] of Object.entries(funcs)) {
+    const obj = f.boundObject || 'Other';
+    if (!grouped[obj]) grouped[obj] = [];
+    grouped[obj].push({ name, ...f });
+  }
+
+  let html = '';
+  let total = 0;
+  for (const [objType, funcList] of Object.entries(grouped)) {
+    html += `<div style="margin-bottom:8px;font-size:12px;font-weight:600;color:#555;">▸ ${objType}</div>`;
+    funcList.forEach(f => {
+      total++;
+      const isValidation = f.funcType === 'validation';
+      const isObjectSet = f.funcType === 'object_set';
+      const badgeColor = isValidation ? '#bbb' : (isObjectSet ? '#fa8c16' : '#1890ff');
+      const funcId = 'func-' + f.name;
+      html += `<div class="action-card" style="opacity:${isValidation ? '0.6' : '1'}">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <span>
+            <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${badgeColor};margin-right:6px;"></span>
+            <strong style="font-size:12px;">${f.name}</strong>
+            <span style="font-size:10px;color:#999;margin-left:4px;">${f.funcType === 'validation' ? '校验' : (f.funcType === 'object_set' ? '批量' : '标量')}</span>
+          </span>
+          ${!isValidation ? `<button style="font-size:10px;padding:2px 8px;" onclick="execFunction('${f.name}', '${objType}')">执行</button>` : '<span style="font-size:10px;color:#bbb;">自动触发</span>'}
+        </div>
+        <div style="font-size:10px;color:#888;margin-top:4px;">${f.displayName || ''} → ${f.returnType}
+          ${f.params && f.params.length > 0 ? ' | 参数: ' + f.params.map(p => p.name + ':' + p.type).join(', ') : ''}
+        </div>
+        <div id="${funcId}-result" style="margin-top:6px;display:none;"></div>
+      </div>`;
+    });
+  }
+  document.getElementById('functions-list').innerHTML = html;
+  document.getElementById('func-count').textContent = `(${total} 个)`;
+}
+
+async function execFunction(funcName, objType) {
+  const funcId = 'func-' + funcName;
+  const resultEl = document.getElementById(funcId + '-result');
+  resultEl.style.display = 'block';
+  resultEl.innerHTML = '<span class="spinner"></span>执行中...';
+
+  // 参数收集：必填参数 prompt，可选参数也 prompt 但允许留空跳过
+  const funcDef = schemaMeta.functions[funcName];
+  let params = {};
+  if (funcDef && funcDef.params && funcDef.params.length > 0) {
+    for (const p of funcDef.params) {
+      const hint = p.required ? `请输入 ${p.name} (${p.type}):` : `请输入 ${p.name} (${p.type}, 可选，留空跳过):`;
+      const val = prompt(hint, '');
+      if (val === null) {
+        if (p.required) { resultEl.innerHTML = '已取消'; return; }
+        continue;
+      }
+      if (val.trim() === '' && !p.required) continue;
+      // 整数参数不转 float
+      if (p.type === 'integer' || p.type === 'int') {
+        params[p.name] = parseInt(val);
+      } else if (p.type === 'float' || p.type === 'number') {
+        params[p.name] = parseFloat(val);
+      } else {
+        params[p.name] = val;
+      }
+    }
+  }
+
+  const queryParts = [];
+  for (const [k, v] of Object.entries(params)) {
+    queryParts.push(k + '=' + encodeURIComponent(v));
+  }
+  const url = '/ontology/functions/' + funcName + (queryParts.length > 0 ? '?' + queryParts.join('&') : '');
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (data.success) {
+      const val = data.data;
+      if (Array.isArray(val)) {
+        let table = '<table class="result-table"><thead><tr>';
+        const firstRow = val[0] || {};
+        const keys = Object.keys(firstRow).filter(k => !k.startsWith('_'));
+        keys.forEach(k => table += `<th>${k}</th>`);
+        table += '</tr></thead><tbody>';
+        val.forEach(row => {
+          table += '<tr>';
+          keys.forEach(k => table += `<td>${row[k] ?? '-'}</td>`);
+          table += '</tr>';
+        });
+        table += '</tbody></table>';
+        resultEl.innerHTML = table;
+      } else if (typeof val === 'object' && val !== null) {
+        resultEl.innerHTML = '<pre style="font-size:11px;">' + JSON.stringify(val, null, 2) + '</pre>';
+      } else {
+        resultEl.innerHTML = `<span style="font-weight:600;color:#1890ff;font-size:16px;">${val ?? '无数据'}</span>`;
+      }
+    } else {
+      resultEl.innerHTML = `<span style="color:#ff4d4f;">错误: ${data.error}</span>`;
+    }
+  } catch(e) {
+    resultEl.innerHTML = `<span style="color:#ff4d4f;">请求失败: ${e.message}</span>`;
+  }
+}
+
+function filterGraph(type) {
+  instanceFilter = type;
+  renderInstanceGraph(type);
+  document.querySelectorAll('.graph-toolbar .instance-only').forEach(b => b.classList.remove('active'));
+  const btnId = 'btn-filter-' + (type === 'all' ? 'all' : type.toLowerCase());
+  const btn = document.getElementById(btnId);
+  if (btn) btn.classList.add('active');
+}
+
+function expandNode(nodeId) {
+  const [type, id] = nodeId.split('-');
+  const relatedEdges = graphData.edges.filter(e => e.from === nodeId || e.to === nodeId);
+  const relatedNodes = new Set();
+  relatedEdges.forEach(e => { relatedNodes.add(e.from); relatedNodes.add(e.to); });
+
+  const visibleNodes = graphData.nodes.map(n => ({
+    id: n.id,
+    color: relatedNodes.has(n.id) ? colors[n.group] : { background: '#eee', border: '#ddd' },
+    shape: 'dot',
+    size: relatedNodes.has(n.id) ? 22 : 10,
+    font: { size: relatedNodes.has(n.id) ? 12 : 0, color: '#333' },
+    hidden: false,
+  }));
+
+  const visibleEdges = graphData.edges
+    .filter(e => relatedNodes.has(e.from) || relatedNodes.has(e.to))
+    .map(e => ({ ...e, color: { opacity: 0.6 }, arrows: 'to' }));
+
+  network.setData({ nodes: new vis.DataSet(visibleNodes), edges: new vis.DataSet(visibleEdges) });
+}
+
+// ======================== 自然语言查询 ========================
+async function nlQuery() {
+  const input = document.getElementById('nlInput').value.trim();
+  if (!input) return;
+
+  const btn = document.getElementById('nlBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>查询中...';
+
+  document.getElementById('answerBox').style.display = 'none';
+  document.getElementById('explorationLog').style.display = 'none';
+  document.getElementById('explorationLog').innerHTML = '';
+
+  const endpoint = nlQueryMode === 'graph' ? '/ontology/nl-query-graph' : '/ontology/nl-query';
+
+  try {
+    const resp = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: input })
+    });
+    const data = await resp.json();
+
+    // 显示回答
+    if (data.answer) {
+      const box = document.getElementById('answerBox');
+      box.style.display = 'block';
+      box.textContent = data.answer;
+    }
+
+    if (nlQueryMode === 'graph') {
+      // 图谱模式：显示探索路径 + 动画
+      renderExplorationPath(data.exploration_path || []);
+    } else {
+      // 批量模式：显示操作步骤和结果
+      renderResults(data);
+    }
+  } catch(e) {
+    document.getElementById('answerBox').style.display = 'block';
+    document.getElementById('answerBox').textContent = '查询失败: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '查询';
+  }
+}
+
+function switchNlMode(mode) {
+  nlQueryMode = mode;
+  document.getElementById('btn-mode-graph').classList.toggle('active', mode === 'graph');
+  document.getElementById('btn-mode-batch').classList.toggle('active', mode === 'batch');
+  document.getElementById('explorationLog').style.display = 'none';
+  document.getElementById('explorationLog').innerHTML = '';
+}
+
+function renderExplorationPath(path) {
+  const logEl = document.getElementById('explorationLog');
+  logEl.style.display = 'block';
+
+  if (!path || path.length === 0) {
+    logEl.innerHTML = '<div style="color:#999;">无探索步骤（直接回答）</div>';
+    return;
+  }
+
+  let html = '<div style="font-weight:600;margin-bottom:4px;color:#333;">🗺️ 图谱游走路径 (' + path.length + ' 步)</div>';
+  path.forEach((step, i) => {
+    html += `<div class="exploration-step">
+      <div class="step-num">${i+1}</div>
+      <div class="step-info">
+        <div class="step-tool">${step.tool_name}</div>
+        <div class="step-input">${JSON.stringify(step.tool_input)}</div>
+        <div class="step-summary">→ ${step.tool_result_summary}</div>
+      </div>
+    </div>`;
+  });
+  logEl.innerHTML = html;
+
+  // 在图谱上动画展示
+  animateExploration(path);
+}
+
+function animateExploration(path) {
+  if (currentView !== 'instance') {
+    switchView('instance');
+  }
+
+  // 收集所有访问过的节点和边
+  const allVisitedNodes = new Set();
+  const allVisitedEdges = [];
+  path.forEach(step => {
+    (step.visited_node_keys || []).forEach(k => allVisitedNodes.add(k));
+    (step.visited_edges || []).forEach(e => allVisitedEdges.push(e));
+  });
+
+  if (allVisitedNodes.size === 0) return;
+
+  // 构建高亮节点和边的 vis 数据集
+  const existingNodes = network.body.data.nodes;
+  const existingEdges = network.body.data.edges;
+
+  // 重置所有节点样式
+  const updatedNodes = existingNodes.get().map(n => {
+    const isVisited = allVisitedNodes.has(n.id);
+    const objType = n.objectType || n.group;
+    return {
+      id: n.id,
+      color: isVisited
+        ? { background: colors[objType] || '#ff4d4f', border: '#333', highlight: { background: colors[objType], border: '#333' } }
+        : { background: '#eee', border: '#ddd', highlight: { background: '#eee', border: '#ddd' } },
+      size: isVisited ? 22 : 10,
+      font: { size: isVisited ? 13 : 10, color: isVisited ? '#333' : '#ccc', bold: isVisited ? true : false },
+      borderWidth: isVisited ? 3 : 1,
+    };
+  });
+
+  const edgeMap = {};
+  allVisitedEdges.forEach(e => { edgeMap[e.from + '|' + e.to] = true; });
+
+  const updatedEdges = existingEdges.get().map(e => {
+    const key = e.from + '|' + e.to;
+    const keyRev = e.to + '|' + e.from;
+    const isVisited = edgeMap[key] || edgeMap[keyRev];
+    return {
+      id: e.id,
+      color: isVisited ? { color: '#ff4d4f', opacity: 1, highlight: { color: '#ff4d4f', opacity: 1 } } : { color: '#ddd', opacity: 0.15 },
+      width: isVisited ? 4 : 1,
+    };
+  });
+
+  network.setData({ nodes: new vis.DataSet(updatedNodes), edges: new vis.DataSet(updatedEdges) });
+
+  // 聚焦到最后访问的节点
+  const lastStep = path[path.length - 1];
+  const lastNodes = lastStep.visited_node_keys || [];
+  if (lastNodes.length > 0) {
+    setTimeout(() => network.focus(lastNodes[lastNodes.length - 1], { scale: 1.2, animation: true }), 300);
+  }
+}
+
+function renderResults(data) {
+  const el = document.getElementById('results');
+  let html = '';
+
+  // 显示错误
+  if (!data.success && data.error) {
+    html += `<div style="background:#fff2f0;border:1px solid #ffccc7;border-radius:6px;padding:8px 12px;color:#ff4d4f;font-size:13px;">查询失败: ${data.error}</div>`;
+    el.innerHTML = html;
+    return;
+  }
+
+  if (data.operations && data.operations.length > 0) {
+    html += '<div style="font-size:11px;color:#999;margin-bottom:8px;">执行步骤: ';
+    html += data.operations.map((o,i) => `<span style="background:#f5f5f5;padding:1px 4px;border-radius:2px;margin:0 2px;">${i+1}. ${o.op}</span>`).join(' → ');
+    html += '</div>';
+  }
+
+  if (data.results && data.results.length > 0) {
+    data.results.forEach((r, i) => {
+      // 错误结果
+      if (r.error) {
+        html += `<div style="font-size:12px;color:#ff4d4f;margin:4px 0;">步骤${i+1} 出错: ${r.error}</div>`;
+        return;
+      }
+      if (r.data === null || r.data === undefined) {
+        html += `<div style="font-size:12px;color:#999;margin:4px 0;">步骤${i+1}: 无结果</div>`;
+        return;
+      }
+      const stepLabel = data.results.length > 1 ? `<span style="font-size:10px;color:#999;">步骤${i+1}:</span> ` : '';
+      if (Array.isArray(r.data) && r.data.length > 0) {
+        html += stepLabel + renderTable(r.data);
+      } else if (Array.isArray(r.data) && r.data.length === 0) {
+        html += `<p style="color:#999;font-size:13px;">${stepLabel}无数据</p>`;
+      } else if (typeof r.data === 'object' && r.data !== null) {
+        html += stepLabel + renderTable([r.data]);
+      } else if (typeof r.data === 'string' || typeof r.data === 'number') {
+        html += `<p style="font-size:18px;font-weight:600;color:#1890ff;">${stepLabel}${r.data}</p>`;
+      }
+    });
+  }
+
+  el.innerHTML = html || '<p style="color:#999;">等待查询...</p>';
+}
+
+function renderTable(items) {
+  if (!items.length) return '';
+  const keys = Object.keys(items[0]).filter(k => !k.startsWith('_'));
+  let html = '<table class="result-table"><thead><tr>';
+  keys.forEach(k => html += `<th>${k}</th>`);
+  html += '</tr></thead><tbody>';
+  items.forEach(item => {
+    html += '<tr>';
+    keys.forEach(k => {
+      let val = item[k];
+      if (k === 'passRate' || String(val).includes('%')) {
+        val = `<span class="badge-tag ${String(val).startsWith('0') ? 'badge-fail' : 'badge-pass'}">${val}</span>`;
+      }
+      html += `<td>${val ?? '-'}</td>`;
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  return html;
+}
+
+// ======================== Action 执行 ========================
+async function doAction(name) {
+  const params = {};
+  if (name === 'createScore') {
+    params.studentId = parseInt(document.getElementById('cs_student').value);
+    params.courseId = parseInt(document.getElementById('cs_course').value);
+    params.scoreValue = parseFloat(document.getElementById('cs_score').value);
+    params.examDate = document.getElementById('cs_date').value;
+  } else if (name === 'updateScore') {
+    params.scoreId = parseInt(document.getElementById('us_id').value);
+    params.scoreValue = parseFloat(document.getElementById('us_score').value);
+  } else if (name === 'assignTeacher') {
+    params.courseId = parseInt(document.getElementById('at_course').value);
+    params.teacherId = parseInt(document.getElementById('at_teacher').value);
+  } else if (name === 'deleteScore') {
+    params.scoreId = parseInt(document.getElementById('ds_id').value);
+  }
+
+  try {
+    const resp = await fetch(`/ontology/actions/${name}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ params })
+    });
+    const data = await resp.json();
+    document.getElementById('results').innerHTML =
+      `<div style="padding:12px;border-radius:6px;background:${data.success ? '#f6ffed' : '#fff2f0'};border:1px solid ${data.success ? '#b7eb8f' : '#ffccc7'};">
+        <strong>${data.success ? '✓' : '✗'}</strong> ${data.message || data.error || JSON.stringify(data)}
+      </div>`;
+    if (data.success) {
+      // 刷新实例数据
+      fetch('/ontology/graph').then(r => r.json()).then(d => {
+        graphData = d;
+        if (currentView === 'instance') renderInstanceGraph(instanceFilter);
+      });
+    }
+  } catch(e) {
+    document.getElementById('results').innerHTML = `<p style="color:#ff4d4f;">请求失败: ${e.message}</p>`;
+  }
+}
+
+// 初始加载
+loadGraph();
+</script>
+</body>
+</html>

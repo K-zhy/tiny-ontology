@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Graph Test</title>
+<script src="/static/vis-network.min.js"></script>
+<style>
+#mynetwork { width: 800px; height: 500px; border: 2px solid red; background: #fff; }
+</style>
+</head>
+<body>
+<h1>Vis.js Test</h1>
+<div id="status"></div>
+<div id="mynetwork"></div>
+
+<script>
+var statusEl = document.getElementById('status');
+
+if (typeof vis === 'undefined') {
+  statusEl.innerHTML = '<p style="color:red">vis is undefined!</p>';
+} else {
+  statusEl.innerHTML = '<p style="color:green">vis loaded. has DataSet: ' + (typeof vis.DataSet) + ', has Network: ' + (typeof vis.Network) + '</p>';
+}
+
+fetch('/ontology/graph')
+  .then(r => r.json())
+  .then(data => {
+    statusEl.innerHTML += '<p>Graph data: ' + data.nodes.length + ' nodes, ' + data.edges.length + ' edges</p>';
+
+    var nodes = new vis.DataSet(
+      data.nodes.map(n => ({ id: n.id, label: n.label, color: n.group === 'Student' ? '#1890ff' : n.group === 'Teacher' ? '#52c41a' : n.group === 'Course' ? '#fa8c16' : '#e94560' }))
+    );
+
+    var edges = new vis.DataSet(
+      data.edges.map(e => ({ from: e.from, to: e.to, label: e.label }))
+    );
+
+    var container = document.getElementById('mynetwork');
+    var options = {};
+    var network = new vis.Network(container, { nodes: nodes, edges: edges }, options);
+
+    statusEl.innerHTML += '<p style="color:green">Network created!</p>';
+  })
+  .catch(err => {
+    statusEl.innerHTML += '<p style="color:red">Error: ' + err.message + '</p>';
+  });
+</script>
+</body>
+</html>
