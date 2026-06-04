@@ -319,9 +319,9 @@ body {
       <div class="section-title">
         Natural Language Query
         <span class="mode-toggle">
-          <button id="btn-mode-oag" class="mode-btn active" onclick="switchNlMode('oag')">OAG</button>
+          <button id="btn-mode-oag" class="mode-btn active" onclick="switchNlMode('oag')">AIP Logic</button>
           <button id="btn-mode-graph" class="mode-btn" onclick="switchNlMode('graph')">Graph Walk</button>
-          <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">Batch</button>
+          <button id="btn-mode-batch" class="mode-btn" onclick="switchNlMode('batch')">Batch Plan</button>
         </span>
       </div>
       <div class="nl-input-row">
@@ -627,7 +627,7 @@ function switchNlMode(mode){
   document.getElementById('explorationLog').innerHTML='';
   const input=document.getElementById('nlInput');
   const hints=document.getElementsByClassName('nl-hints')[0];
-  if(mode==='oag'){input.placeholder='张三高等数学多少分';hints.innerHTML='Ontology Augmented Generation &middot; 试试：张三高等数学多少分 &middot; 优秀学生有哪些';}
+  if(mode==='oag'){input.placeholder='张三高等数学多少分';hints.innerHTML='AIP Logic &mdash; Ontology Tool Calling (Data / Logic / Action) &middot; 试试：张三高等数学多少分 &middot; 优秀学生有哪些';}
   else if(mode==='graph'){input.placeholder='查张三所有课程的平均分';hints.innerHTML='Graph Walk (实例探索) &middot; 试试：查张三的成绩 &middot; 高等数学谁考了最高分';}
   else{input.placeholder='查张三所有课程的平均分';hints.innerHTML='Batch Plan (JSON计划) &middot; 试试：查张三的成绩 &middot; 高等数学谁考了最高分';}
 }
@@ -636,7 +636,7 @@ function renderOagExploration(log){
   const logEl=document.getElementById('explorationLog');
   logEl.style.display='block';
   if(!log||!log.length){logEl.innerHTML='<div style="color:var(--ink-muted);">No exploration steps (direct answer)</div>';return;}
-  let html='<div style="font-weight:600;margin-bottom:6px;color:var(--sage);">OAG Query Log ('+log.length+' steps)</div>';
+  let html='<div style="font-weight:600;margin-bottom:6px;color:var(--sage);">AIP Logic Tool Call Log ('+log.length+' steps)</div>';
   log.forEach((step,i)=>{
     html+=`<div class="exploration-step"><div class="step-num">${i+1}</div><div class="step-info"><div class="step-tool">${step.tool}</div><div class="step-input">${JSON.stringify(step.input)}</div><div class="step-summary">&rarr; ${step.summary}</div></div></div>`;
   });

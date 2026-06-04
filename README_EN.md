@@ -38,7 +38,7 @@ Ontology Semantic Layer
         ▼  Exposure (server.py)
 ┌──────────────────────────────────────────────────────────┐
 │  REST API    │  Frontend Graph │      NL Query            │
-│  CRUD endpoints │  vis.js       │  OAG Mode (recommended) │
+│  CRUD endpoints │  vis.js       │  AIP Logic Mode (recommended) │
 │  /docs       │  Force-directed │  + Graph Walk + Batch   │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -76,22 +76,37 @@ All writes must go through Actions. Direct table writes are forbidden.
 
 Three NL query modes, representing different architectural approaches.
 
-### OAG Mode `POST /ontology/nl-query-oag` (Recommended)
+### AIP Logic Mode `POST /ontology/nl-query-oag` (Recommended)
 
-**Ontology Augmented Generation (OAG) Mode**: The LLM declares query intent at the object type level, and the engine automatically compiles SQL JOINs based on Link definitions. **The LLM never touches instance data or traversal logic.**
+This mode faithfully implements the core architecture of Palantir [AIP Logic](https://www.palantir.com/docs/foundry/logic/overview/): **LLM + Ontology tool calling**.
 
-This aligns with [Palantir AIP's OAG](https://www.palantir.com/docs/foundry/ontology/ontology-augmented-generation): the Ontology serves as a constraint system — the LLM only understands user intent and fills parameters, without orchestrating query execution paths.
+#### Correspondence to Official AIP Logic
 
-| Tool | Function | vs. Traditional |
-|------|----------|-----------------|
-| `query_objects` | **Core**: Cross-link dot-notation filter. e.g. `type="Score", filters={"student.name":"Zhang", "course.name":"Math"}` → engine auto-JOINs tables | Replaces multi-step search + traverse |
-| `query_object_set` | Query a predefined ObjectSet (e.g. TopStudents) | New capability |
-| `list_object_types` | List all types + ObjectSets + relationships | Added ObjectSet info |
-| `get_object_detail` | Get full object details | Takes `(type, id)` instead of `(node_key)` |
-| `call_function` | Invoke compute functions | Same |
-| `execute_action` | Execute write operations | Same |
+AIP Logic's "Use LLM" Block exposes three categories of Ontology-driven tools to the LLM ([official docs](https://www.palantir.com/docs/foundry/logic/blocks/#tools)). This project fully implements all three:
 
-**Key difference**: No `traverse` tool. Link traversal moves from the LLM's decision space into the engine's compilation space. Query results automatically include derived properties (avgScore, passRate).
+> *AIP Logic leverages three categories of Ontology-driven tools — **data, logic, and action** — to effectively query data, execute logical operations, and safely take actions.*
+> — Palantir AIP Logic Blocks documentation
+
+| Official Tool | Description | This Project's Tool | Implementation |
+|---|---|---|---|
+| **Query objects** (Data) | Object Types the LLM can access; supports property filters, Link traversal, aggregation | `query_objects` | Cross-Link dot-notation filters (e.g. `{"student.name":"Zhang"}`), engine auto-compiles SQL JOIN; derived properties included automatically |
+| **Query objects** (Data) | — | `query_object_set` | Queries predefined ObjectSets (TopStudents, PassedCourses); business logic stays in the engine, LLM just passes the name |
+| **Call function** (Logic) | Invokes Foundry Functions or published AIP Logic functions | `call_function` | Calls predefined compute functions: `getAvgScore`, `getTopStudents`, etc. |
+| **Apply actions** (Action) | LLM writes to the Ontology via Actions, executed under the invoking user's permissions | `execute_action` | Executes `createScore`, `updateScore`, etc. — validation → transaction → audit log |
+
+Additional helper tools (official platform uses UI-configured schemas; this project exposes them as runtime tools):
+
+| Tool | Purpose |
+|---|---|
+| `list_object_types` | LLM dynamically discovers Schema (Object Types, Links, ObjectSets) |
+| `get_object_detail` | Fetch full object details by `(type, id)`, including derived properties |
+
+#### Key Design Principles (Aligned with Official Docs)
+
+1. **LLM never directly accesses data**: The official docs state *"LLMs do not have direct access to tools; LLMs can only ask to use tools, and these tool calls are then executed by AIP Logic"*. In this project, LLM calls a tool → engine translates to SQL — the execution path is identical.
+2. **Link traversal handled by the engine**: The LLM doesn't need to reason about "query student first, then JOIN score" — it simply declares `{"student.name":"Zhang", "course.name":"Math"}` and the engine compiles the cross-table JOIN. This matches the Link traversal capability in AIP Logic's Object Query tool.
+3. **Derived properties computed transparently**: Results from `query_objects` and `query_object_set` automatically include `avgScore` and `passRate`. The LLM never needs to make a separate Function call. This mirrors how AIP Logic transparently injects computed results into objects.
+4. **Native Tool Calling**: This project uses Anthropic's native `tool_use` protocol, matching the official "Native tool calling" mode (*improved speed and performance, ability to call multiple tools in parallel*).
 
 ### Graph Walk Mode `POST /ontology/nl-query-graph`
 
@@ -103,7 +118,7 @@ The LLM outputs a complete JSON operation sequence. The engine executes sequenti
 
 ### Query Comparison
 
-| Query | OAG Mode (Recommended) | Graph Walk Mode |
+| Query | AIP Logic Mode (Recommended) | Graph Walk Mode |
 |-------|----------------------|-----------------|
 | "Zhang San's Advanced Math score" | **1 step**: `query_objects(Score, {student.name, course.name})` | 8 steps: search → traverse scores → traverse each to course |
 | "Who are the top students?" | **1 step**: `query_object_set("TopStudents")` | Not supported (no ObjectSet) |
@@ -147,7 +162,7 @@ The LLM outputs a complete JSON operation sequence. The engine executes sequenti
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/ontology/nl-query-oag` | **OAG Mode (recommended)** — type-level query with engine-compiled JOINs |
+| POST | `/ontology/nl-query-oag` | **AIP Logic Mode (recommended)** — type-level query with engine-compiled JOINs |
 | POST | `/ontology/nl-query-graph` | Graph Walk mode — LLM agent explores instance graph |
 | POST | `/ontology/nl-query` | Batch Planning mode — LLM outputs JSON operation sequence |
 
