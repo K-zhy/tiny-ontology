@@ -284,6 +284,18 @@ class OntologyGraph:
             name for name, targets in available.items() if targets
         ]
 
+        # 为 Score 节点附加关联对象名，避免 LLM 逐个 traverse
+        if obj_type == "Score":
+            ctx = []
+            for edge_name in ("earnedBy", "forCourse"):
+                targets = available.get(edge_name, [])
+                if targets:
+                    target_node = self._nodes.get(targets[0], {})
+                    target_name = target_node.get("name", targets[0])
+                    ctx.append(target_name)
+            if ctx:
+                enriched["_context"] = " → ".join(ctx)
+
         return enriched
 
 

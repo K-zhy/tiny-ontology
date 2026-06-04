@@ -425,37 +425,40 @@ async def api_nl_query_graph(req: dict):
         # 提取文本块
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
 
-        # 处理 tool_use
+        # 处理所有 tool_use（一次 LLM 响应可能并行调多个工具）
         if tool_use_blocks:
-            tool = tool_use_blocks[0]
-            tool_name = tool["name"]
-            tool_input = tool.get("input", {})
-            tool_id = tool.get("id", "")
-            tool_result = _execute_graph_tool(graph, tool_name, tool_input)
-
-            exploration_path.append({
-                "step": iteration + 1,
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_result_summary": tool_result["summary"],
-                "visited_node_keys": tool_result.get("visited_node_keys", []),
-                "visited_edges": tool_result.get("visited_edges", []),
-            })
-
             # 传回完整 assistant content（含 thinking 块，DeepSeek 要求）
             messages.append({"role": "assistant", "content": content_blocks})
-            # 工具调用后的提示：超过2步后强提醒只需回答
-            remaining = max_iterations - iteration - 1
+
+            tool_results_content = []
+            for tool in tool_use_blocks:
+                tool_name = tool["name"]
+                tool_input = tool.get("input", {})
+                tool_id = tool.get("id", "")
+                tool_result = _execute_graph_tool(graph, tool_name, tool_input)
+
+                exploration_path.append({
+                    "step": iteration + 1,
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_result_summary": tool_result["summary"],
+                    "visited_node_keys": tool_result.get("visited_node_keys", []),
+                    "visited_edges": tool_result.get("visited_edges", []),
+                })
+
+                tool_results_content.append(
+                    {"type": "tool_result", "tool_use_id": tool_id,
+                     "content": tool_result["content"]}
+                )
+
+            # 超过2步后强提醒只需回答
             steps_done = iteration + 1
             if steps_done >= 2:
                 hint = f"\n\n[已执行 {steps_done} 步。现在你应该已经有足够数据回答用户问题了。请直接用中文给出答案，不要再调工具。]"
-            else:
-                hint = ""
+                if tool_results_content:
+                    tool_results_content[-1]["content"] += hint
 
-            messages.append({"role": "user", "content": [
-                {"type": "tool_result", "tool_use_id": tool_id,
-                 "content": tool_result["content"] + hint}
-            ]})
+            messages.append({"role": "user", "content": tool_results_content})
             continue
 
         # 尝试 JSON 文本格式工具调用（fallback）
@@ -850,8 +853,13 @@ def _format_node_for_llm(graph, node: dict, detail: bool = False) -> str:
 
     lines = [f"[{node_key}] {obj_type} \"{name}\""]
 
+    # 上下文（如 Score 节点显示关联的学生名和课程名）
+    ctx = node.get("_context", "")
+    if ctx:
+        lines.append(f"  ({ctx})")
+
     # 紧凑属性行
-    skip = {"name", "_node_key", "_objectType", "_traversals", "_functions", "_actions", "_available_traversals"}
+    skip = {"name", "_node_key", "_objectType", "_traversals", "_functions", "_actions", "_available_traversals", "_context"}
     prop_parts = []
     for k, v in node.items():
         if k.startswith("_") or k in skip:
