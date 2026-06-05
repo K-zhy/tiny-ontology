@@ -939,6 +939,61 @@ def _format_node_for_llm(graph, node: dict, detail: bool = False) -> str:
 # OAG 模式 NL 查询（Ontology Augmented Generation：类型层查询，非实例图游走）
 # ============================================================
 
+def _infer_relevant_types(query_text: str) -> list[str]:
+    """从查询文本推断涉及的对象类型（关键词匹配，无需额外 LLM 调用）"""
+    type_keywords = {
+        "Student": ["学生", "同学", "student", "平均分", "avgscore", "学号"],
+        "Teacher": ["老师", "教师", "teacher", "讲师", "教授", "任课"],
+        "Course": ["课程", "科目", "course", "学分", "通过率", "passrate"],
+        "Score": ["成绩", "分数", "score", "考试", "不及格", "挂科", "高分", "低分"],
+    }
+    q = query_text.lower()
+    matched = set(t for t, kws in type_keywords.items() if any(kw in q for kw in kws))
+    # Score 查询通常需要 Student 和 Course 上下文（studentName/courseName 富化）
+    if "Score" in matched:
+        matched.update(["Student", "Course"])
+    # 人名出现时通常指 Student
+    import re
+    if re.search(r'[\u4e00-\u9fff]{2,3}(?:的|同学|学生)', query_text):
+        matched.add("Student")
+    result = [t for t in OBJECT_TYPES.keys() if t in matched]
+    return result if result else list(OBJECT_TYPES.keys())
+
+
+def _param_type_to_json_schema(param_type: str) -> str:
+    return {"integer": "integer", "int": "integer", "float": "number", "number": "number"}.get(param_type, "string")
+
+
+def _build_object_bound_tool_schemas(relevant_types: list[str]) -> list[dict]:
+    """按 relevant_types 动态生成对象绑定函数工具（工具名: fn_{funcName}）"""
+    tools = []
+    relevant_set = set(relevant_types)
+    for func_name, func_def in FUNCTIONS.items():
+        if func_def.func_type == "validation":
+            continue
+        if func_def.bound_object in relevant_set:
+            type_label = func_def.bound_object
+        elif func_def.bound_object in INTERFACES:
+            iface = INTERFACES[func_def.bound_object]
+            applicable = [t for t in iface.implementors if t in relevant_set]
+            if not applicable:
+                continue
+            type_label = "、".join(applicable)
+        else:
+            continue
+        props = {}
+        required_params = []
+        for p in func_def.params:
+            props[p.name] = {"type": _param_type_to_json_schema(p.param_type), "description": p.name}
+            if p.required:
+                required_params.append(p.name)
+        tools.append({
+            "name": f"fn_{func_name}",
+            "description": f"[{type_label}] {func_def.display_name} → 返回 {func_def.return_type}",
+            "input_schema": {"type": "object", "properties": props, "required": required_params},
+        })
+    return tools
+
 
 @app.post("/ontology/nl-query-oag")
 async def api_nl_query_oag(req: dict):
@@ -946,11 +1001,14 @@ async def api_nl_query_oag(req: dict):
     query_text = req.get("query", "")
     max_iterations = req.get("max_iterations", 20)
 
-    system_prompt = _build_oag_system_prompt()
-    tool_schemas = _build_oag_tool_schemas()
+    # Phase 1: 推断相关对象类型（关键词匹配，无额外 LLM 调用）
+    relevant_types = _infer_relevant_types(query_text)
+
+    system_prompt = _build_oag_system_prompt(relevant_types)
+    tool_schemas = _build_oag_tool_schemas(relevant_types) + _build_object_bound_tool_schemas(relevant_types)
 
     messages = [{"role": "user", "content": query_text}]
-    exploration_log = []
+    exploration_log = [{"step": 0, "tool": "type_inference", "input": {"query": query_text}, "summary": f"推断相关对象类型: {', '.join(relevant_types)}"}]
     final_answer = None
 
     for iteration in range(max_iterations):
@@ -1013,17 +1071,57 @@ async def api_nl_query_oag(req: dict):
     }
 
 
-def _build_oag_system_prompt() -> str:
+def _build_oag_system_prompt(relevant_types: list[str] | None = None) -> str:
+    if relevant_types is None:
+        relevant_types = list(OBJECT_TYPES.keys())
     schema = _build_llm_context()
+
+    # 生成本次可用的对象绑定函数描述
+    relevant_set = set(relevant_types)
+    fn_lines = []
+    for func_name, func_def in FUNCTIONS.items():
+        if func_def.func_type == "validation":
+            continue
+        if func_def.bound_object in relevant_set:
+            type_label = func_def.bound_object
+        elif func_def.bound_object in INTERFACES:
+            iface = INTERFACES[func_def.bound_object]
+            applicable = [t for t in iface.implementors if t in relevant_set]
+            if not applicable:
+                continue
+            type_label = "、".join(applicable)
+        else:
+            continue
+        params_str = ", ".join(f"{p.name}:{p.param_type}" + ("" if p.required else "?") for p in func_def.params)
+        fn_lines.append(f"- fn_{func_name}({params_str}) → [{type_label}] {func_def.display_name}")
+
+    types_str = "、".join(relevant_types)
+    fn_section = "\n".join(fn_lines) if fn_lines else "（无）"
+
     return f"""你是一个 Ontology 对象查询助手。系统使用 Ontology Augmented Generation（OAG）模式：所有数据建模为业务对象（Student、Course、Score、Teacher），Ontology 提供 Data（对象+Link）、Logic（函数）、Action（写操作）三类能力来增强你的回答。
+
+## 本次查询推断的对象类型
+{types_str}
+
+## 本次可用的对象绑定函数
+{fn_section}
 
 ## 核心原则
 1. 你通过 **query_objects** 在类型层面声明查询意图，用属性过滤条件返回结果。不要遍历实例图。
-2. 对象属性支持**跨 Link 点号过滤**（如 filters={{{{ "student.name": "张三", "course.name": "数学" }}}}），系统自动处理跨表 JOIN。
-3. 查询结果**自动包含派生属性**（avgScore、passRate）。Score 查询结果**自动附带 studentName、courseName、teacherName**。
-4. 预定义的 ObjectSet 通过 **query_object_set** 引用，如 TopStudents、PassedCourses。
-5. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
-6. **再次强调：Score 结果已经包含 studentName、courseName、teacherName，你不需要再单独查 Student 或 Course 表！**
+2. 对象属性支持**跨 Link 点号过滤**（如 filters={{"student.name":"张三","course.name":"数学"}}），系统自动处理跨表 JOIN。
+3. 过滤条件支持**多种运算符**，value 可以是标量（等值）或 {{"op":"运算符","value":值}} 格式：
+   - 比较: gt / gte / lt / lte / ne（大于/大于等于/小于/小于等于/不等于）
+   - 范围: between（需 value=[下限,上限]）
+   - 集合: in / not_in（需 value=[...]）
+   - 空值: is_null / is_not_null（无需 value）
+   - 模糊: like（value 中直接写 %...%）
+4. 支持 **$or 条件**：filters={{"$or":[{{"name":"张三"}},{{"className":"理学院"}}]}}，括号内支持运算符。
+5. **order_by 支持点号跨 Link**，如 order_by="course.name" 按关联课程名排序。
+6. 查询结果**自动包含派生属性**（avgScore、passRate）。Score 查询结果**自动附带 studentName、courseName、teacherName**。
+7. 预定义的 ObjectSet 通过 **query_object_set** 引用，如 TopStudents、PassedCourses。
+8. **对象绑定函数通过 `fn_{{funcName}}` 工具直接调用**（如 fn_getAvgScore、fn_getPassRate），无需经过 call_function 包装。需要先用 query_objects 拿到对象 id，再传给函数。
+9. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
+10. **再次强调：Score 结果已经包含 studentName、courseName、teacherName，你不需要再单独查 Student 或 Course 表！**
 
 ## Schema
 
@@ -1034,22 +1132,36 @@ def _build_oag_system_prompt() -> str:
 - **PassedCourses**: 课程平均分 >= 60 的及格课程
 
 ## 常用查询模式
-- "张三的数学成绩" → query_objects(type="Score", filters={{{{ "student.name": "张三", "course.name": "数学" }}}})
+- "张三的数学成绩" → query_objects(type="Score", filters={{"student.name": "张三", "course.name": "数学"}})
 - "优秀学生有哪些" → query_object_set(set_name="TopStudents")
-- "张三的平均分" → query_objects(type="Student", filters={{{{ "name": "张三" }}}})，结果含 avgScore
-- "谁的成绩最差" → query_objects(type="Score", order_by="scoreValue", order_dir="asc", limit=1) — 结果自带 studentName
-- "高等数学谁最高分" → query_objects(type="Score", filters={{{{ "course.name": "高等数学" }}}}, order_by="scoreValue", order_dir="desc", limit=1)
+- "张三的平均分" → query_objects(type="Student", filters={{"name": "张三"}})，结果含 avgScore
+- "谁的成绩最差" → query_objects(type="Score", order_by="scoreValue", order_dir="asc", limit=1)
+- "高等数学谁最高分" → query_objects(type="Score", filters={{"course.name": "高等数学"}}, order_by="scoreValue", order_dir="desc", limit=1)
 - "有哪些类型的对象" → list_object_types
+- "成绩在80到90之间的" → query_objects(type="Score", filters={{"scoreValue": {{"op":"between","value":[80,90]}}}})
+- "成绩大于85分的学生" → query_objects(type="Score", filters={{"scoreValue": {{"op":"gt","value":85}}}})
+- "高等数学低于80分的学生" → query_objects(type="Score", filters={{"course.name":"高等数学","scoreValue":{{"op":"lt","value":80}}}})
+- "数据结构不及格（<60）的" → query_objects(type="Score", filters={{"course.name":"数据结构","scoreValue":{{"op":"lt","value":60}}}})
+- "高等数学低于80 **或** 数据结构低于80" → 分两次 query_objects 分别查，合并 studentName 列表（$or 不支持跨 Link 条件，须拆开查）
+- "张三或李四的成绩" → query_objects(type="Score", filters={{"student.name": {{"op":"in","value":["张三","李四"]}}}})
+- "还没有老师的课程" → query_objects(type="Course", filters={{"teacherId": {{"op":"is_null"}}}})
+- "按课程名排序所有成绩" → query_objects(type="Score", order_by="course.name")
 
 ## 规则
 - **Score 结果已经包含 studentName、courseName、teacherName，不要再单独查 Student/Course！**
+- "低于/小于/不超过 N" 必须用 {{"op":"lt","value":N}} 或 {{"op":"lte","value":N}}，**禁止用等值 N 代替**
+- "高于/大于/超过 N" 必须用 {{"op":"gt","value":N}} 或 {{"op":"gte","value":N}}
 - 找最好/最差/最高/最低时用 order_by + order_dir + limit=1
+- **跨不同 Link 路径的 OR（如 高等数学低于80 OR 数据结构低于80）须拆成两次 query_objects，合并结果**
+- $or 仅支持同一对象的直接属性条件，不支持跨 Link
 - 知道某属性值但不知道具体类型时，先查对应类型，再用跨 Link 过滤
 - 找不到就说没找到，不编造数据
 - 跨 Link 过滤优先用点号语法，而非多步查询"""
 
 
-def _build_oag_tool_schemas() -> list[dict]:
+def _build_oag_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
+    if relevant_types is None:
+        relevant_types = list(OBJECT_TYPES.keys())
     return [
         {
             "name": "list_object_types",
@@ -1058,22 +1170,36 @@ def _build_oag_tool_schemas() -> list[dict]:
         },
         {
             "name": "query_objects",
-            "description": "在类型层面查询对象，支持跨 Link 点号过滤。例如查询成绩时过滤 student.name='张三'、course.name='数学'。结果自动含派生属性（avgScore、passRate）。对 Score 结果会补充 studentName 和 courseName。",            "input_schema": {
+            "description": "在类型层面查询对象，支持跨 Link 点号过滤和多种运算符。结果自动含派生属性（avgScore、passRate）。对 Score 结果会补充 studentName 和 courseName。",
+            "input_schema": {
                 "type": "object",
                 "properties": {
                     "object_type": {
                         "type": "string",
-                        "enum": ["Student", "Teacher", "Course", "Score"],
+                        "enum": relevant_types,
                         "description": "要查询的对象类型",
                     },
                     "filters": {
                         "type": "object",
-                        "description": "过滤条件。直接属性: {\"name\": \"张三\"}。跨 Link 点号: {\"student.name\": \"张三\", \"course.name\": \"数学\"}。",
+                        "description": (
+                            "过滤条件，支持以下格式（可混用）：\n"
+                            "- 等值: {\"name\": \"张三\"}\n"
+                            "- 运算符: {\"scoreValue\": {\"op\": \"gte\", \"value\": 85}}\n"
+                            "  可用 op: eq ne gt gte lt lte like between in not_in is_null is_not_null\n"
+                            "- between: {\"scoreValue\": {\"op\": \"between\", \"value\": [80, 90]}}\n"
+                            "- in: {\"name\": {\"op\": \"in\", \"value\": [\"张三\", \"李四\"]}}\n"
+                            "- 跨 Link: {\"student.name\": \"张三\", \"course.name\": \"数学\"}\n"
+                            "- 跨 Link 运算符: {\"score.scoreValue\": {\"op\": \"gt\", \"value\": 60}}\n"
+                            "- OR: {\"$or\": [{\"name\": \"张三\"}, {\"className\": \"理学院\"}]}"
+                        ),
                     },
-                    "fuzzy": {"type": "boolean", "description": "是否模糊匹配文本属性"},
+                    "fuzzy": {"type": "boolean", "description": "是否模糊匹配文本属性（标量值时有效）"},
                     "limit": {"type": "integer", "description": "返回上限（默认 20）"},
-                    "order_by": {"type": "string", "description": "按某属性排序的字段名"},
-                    "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向 asc/desc"},
+                    "order_by": {
+                        "type": "string",
+                        "description": "排序字段名，支持点号跨 Link，如 'scoreValue' 或 'course.name'",
+                    },
+                    "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向"},
                 },
                 "required": ["object_type"],
             },
@@ -1101,22 +1227,10 @@ def _build_oag_tool_schemas() -> list[dict]:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "object_type": {"type": "string", "enum": ["Student", "Teacher", "Course", "Score"]},
+                    "object_type": {"type": "string", "enum": relevant_types},
                     "object_id": {"type": "integer", "description": "对象的数字 ID"},
                 },
                 "required": ["object_type", "object_id"],
-            },
-        },
-        {
-            "name": "call_function",
-            "description": "调用系统预定义的计算函数。可选: getAvgScore、getCourseAvgScore、getPassRate、getTopStudents、getAllCourseAvgScores、searchByName、getScoreSummary。",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "function_name": {"type": "string", "description": "函数名"},
-                    "params": {"type": "object", "description": "函数参数"},
-                },
-                "required": ["function_name"],
             },
         },
         {
@@ -1320,6 +1434,12 @@ def _execute_oag_tool(tool_name: str, inp: dict) -> dict:
             if result.get("success"):
                 reload_graph()
             return {"content": json.dumps(result, ensure_ascii=False), "summary": f"executed {action_name}"}
+
+        elif tool_name.startswith("fn_"):
+            # 对象绑定函数：工具名 fn_{funcName}，参数直接传给 call_function
+            func_name = tool_name[3:]
+            result = call_function(func_name, inp)
+            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"fn:{func_name} → {result.get('data', result.get('error', '?'))}"}
 
         return {"content": f"未知工具: {tool_name}", "summary": "unknown tool"}
 

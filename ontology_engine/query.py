@@ -8,6 +8,70 @@ from ontology_engine.database import get_connection
 from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES
 
 
+# ============================================================
+# 条件编译器 — 支持多运算符
+# ============================================================
+
+# 简单二元运算符映射
+_OP_MAP = {
+    "eq": "=", "ne": "!=",
+    "gt": ">", "gte": ">=",
+    "lt": "<", "lte": "<=",
+    "like": "LIKE", "ilike": "LIKE",
+}
+
+
+def _compile_condition(col_ref: str, value, params: list) -> str:
+    """将 (列引用, 值) 编译为 SQL 条件片段，追加参数到 params。
+
+    支持格式：
+    - 标量值                              → col = ?
+    - {"op":"gt",  "value":85}           → col > ?
+    - {"op":"gte", "value":85}           → col >= ?
+    - {"op":"lt",  "value":90}           → col < ?
+    - {"op":"lte", "value":90}           → col <= ?
+    - {"op":"ne",  "value":0}            → col != ?
+    - {"op":"between","value":[80,90]}   → col BETWEEN ? AND ?
+    - {"op":"in",   "value":["a","b"]}   → col IN (?,?)
+    - {"op":"not_in","value":[...]}      → col NOT IN (?,?)
+    - {"op":"like", "value":"%张%"}      → col LIKE ?
+    - {"op":"is_null"}                   → col IS NULL
+    - {"op":"is_not_null"}               → col IS NOT NULL
+    """
+    if not (isinstance(value, dict) and "op" in value):
+        params.append(value)
+        return f"{col_ref} = ?"
+
+    op = value["op"].lower()
+    v = value.get("value")
+
+    if op == "is_null":
+        return f"{col_ref} IS NULL"
+    if op == "is_not_null":
+        return f"{col_ref} IS NOT NULL"
+    if op == "between":
+        if not (isinstance(v, (list, tuple)) and len(v) == 2):
+            raise ValueError(f"'between' 需要长度为 2 的列表，收到: {v!r}")
+        params.extend(v)
+        return f"{col_ref} BETWEEN ? AND ?"
+    if op in ("in", "not_in"):
+        if not isinstance(v, (list, tuple)) or len(v) == 0:
+            raise ValueError(f"'{op}' 需要非空列表，收到: {v!r}")
+        placeholders = ",".join("?" * len(v))
+        params.extend(v)
+        sql_op = "IN" if op == "in" else "NOT IN"
+        return f"{col_ref} {sql_op} ({placeholders})"
+    if op in _OP_MAP:
+        if v is None:
+            raise ValueError(f"运算符 '{op}' 需要提供 'value'")
+        params.append(v)
+        return f"{col_ref} {_OP_MAP[op]} ?"
+    raise ValueError(
+        f"不支持的运算符 '{op}'，可用: "
+        f"{list(_OP_MAP.keys()) + ['between', 'in', 'not_in', 'is_null', 'is_not_null']}"
+    )
+
+
 def get_object(object_type: str, object_id: int) -> Optional[dict]:
     """获取单个对象（含派生属性）"""
     obj_def = OBJECT_TYPES[object_type]
@@ -168,7 +232,10 @@ def _find_link_by_segment(current_type: str, segment: str):
 
 
 def _build_link_joins(
-    query_type: str, link_filters: dict, fuzzy: bool = False
+    query_type: str, link_filters: dict, fuzzy: bool = False,
+    join_clauses: Optional[list] = None,
+    join_cache: Optional[dict] = None,
+    alias_counter: Optional[list] = None,
 ) -> tuple[list[str], list[str], list]:
     """根据点号过滤器构建 SQL JOIN 链。
 
@@ -179,13 +246,22 @@ def _build_link_joins(
 
     去重：相同路径前缀共享同一个 JOIN（如 student.name + student.className）。
 
+    支持运算符：value 可以是标量或 {"op":"gt","value":85} 等格式。
+
+    join_clauses / join_cache / alias_counter 可由外部传入，实现跨调用共享 JOIN 状态
+    （用于同时处理过滤和跨 Link ORDER BY 的场景）。
+
     Returns (join_clauses, where_clauses, params).
     """
-    join_clauses = []
+    if join_clauses is None:
+        join_clauses = []
+    if join_cache is None:
+        join_cache = {}
+    if alias_counter is None:
+        alias_counter = [1]
+
     where_clauses = []
     params = []
-    join_cache: dict[tuple[str, str], str] = {}  # (alias, segment) → new_alias
-    alias_counter = [1]
 
     for key, value in link_filters.items():
         parts = key.split(".")
@@ -255,13 +331,14 @@ def _build_link_joins(
                 f"可用: {[p.name for p in target_obj_def.properties]}"
             )
 
-        col = prop.column
-        if fuzzy and prop.data_type == "TEXT":
-            where_clauses.append(f"{current_alias}.{col} LIKE ?")
+        col_ref = f"{current_alias}.{prop.column}"
+
+        # fuzzy 仅对 TEXT 标量值（非运算符 dict）有效
+        if fuzzy and prop.data_type == "TEXT" and not isinstance(value, dict):
+            where_clauses.append(f"{col_ref} LIKE ?")
             params.append(f"%{value}%")
         else:
-            where_clauses.append(f"{current_alias}.{col} = ?")
-            params.append(value)
+            where_clauses.append(_compile_condition(col_ref, value, params))
 
     return join_clauses, where_clauses, params
 
@@ -292,77 +369,163 @@ def query_objects_v2(
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict]:
-    """跨 Link 查询对象，支持点号链式过滤。
+    """跨 Link 查询对象，支持点号链式过滤、多运算符、OR 条件。
 
-    三种 filter 格式：
-    - 直接属性: {"name": "张三", "age": 20}
-    - 单跳 Link: {"student.name": "张三", "course.name": "数学"}
-    - 多跳 Link: {"course.teacher.department": "理学院"}
+    filter 格式（所有格式可混用）：
+    - 等值:   {"name": "张三"}
+    - 运算符: {"scoreValue": {"op": "gte", "value": 85}}
+             {"scoreValue": {"op": "between", "value": [80, 90]}}
+             {"name": {"op": "in", "value": ["张三", "李四"]}}
+             {"field": {"op": "is_null"}}
+    - 跨Link: {"student.name": "张三", "course.name": "数学"}
+    - 跨Link运算符: {"score.scoreValue": {"op": "gt", "value": 60}}
+    - OR 条件: {"$or": [{"name": "张三"}, {"className": "理学院"}]}
+              （$or 内支持直接属性及运算符，不支持跨 Link）
 
-    引擎通过 registry.py 的 LINK_TYPES 自动解析路径，编译为 SQL JOIN。
+    order_by 支持点号跨 Link 排序，如 "course.name"。
+    当存在 JOIN 时自动加 DISTINCT 防止行膨胀。
     """
-    obj_def = OBJECT_TYPES[object_type]
+    obj_def = OBJECT_TYPES.get(object_type)
     if not obj_def:
         raise ValueError(f"Unknown object type: {object_type}")
 
-    # 拆分直接过滤和跨 Link 过滤
+    # 共享 JOIN 状态（过滤与 ORDER BY 共用，避免重复 JOIN）
+    join_clauses: list[str] = []
+    join_cache: dict = {}
+    alias_counter = [1]
+
+    # 拆分 filters：$or / 跨Link / 直接属性
+    filters = dict(filters) if filters else {}
+    or_groups = filters.pop("$or", None)
+
     direct_filters = {}
     link_filters = {}
-    if filters:
-        for key, value in filters.items():
-            if "." in key:
-                link_filters[key] = value
-            else:
-                direct_filters[key] = value
+    for key, value in filters.items():
+        if "." in key:
+            link_filters[key] = value
+        else:
+            direct_filters[key] = value
 
-    # 基表别名 t0
     regular_cols = [
         p.column
         for p in obj_def.properties
         if p.prop_type in ("primary_key", "regular")
     ]
     cols_str = ", ".join(f"t0.{c}" for c in regular_cols)
-    sql_parts = [f"SELECT {cols_str} FROM {obj_def.table} t0"]
-    params = []
-    where_clauses = []
+    params: list = []
+    where_clauses: list[str] = []
 
-    # 从 link filters 构建 JOIN
+    # 跨 Link 过滤 → JOIN + WHERE（共享 join_cache）
     if link_filters:
-        join_clauses, link_where, link_params = _build_link_joins(
-            object_type, link_filters, fuzzy
+        _, link_where, link_params = _build_link_joins(
+            object_type, link_filters, fuzzy,
+            join_clauses, join_cache, alias_counter,
         )
-        sql_parts.extend(join_clauses)
         where_clauses.extend(link_where)
         params.extend(link_params)
 
-    # 直接属性过滤（在基表上）
+    # 直接属性过滤
     for key, value in direct_filters.items():
         prop = next((p for p in obj_def.properties if p.name == key), None)
         if not prop or not prop.column:
             continue
-        if fuzzy and prop.data_type == "TEXT":
-            where_clauses.append(f"t0.{prop.column} LIKE ?")
+        col_ref = f"t0.{prop.column}"
+        if fuzzy and prop.data_type == "TEXT" and not isinstance(value, dict):
+            where_clauses.append(f"{col_ref} LIKE ?")
             params.append(f"%{value}%")
         else:
-            where_clauses.append(f"t0.{prop.column} = ?")
-            params.append(value)
+            where_clauses.append(_compile_condition(col_ref, value, params))
+
+    # $or 条件（仅支持直接属性，可含运算符）
+    if or_groups:
+        or_clauses = []
+        for branch in or_groups:
+            branch_params: list = []
+            branch_clauses: list[str] = []
+            for key, value in branch.items():
+                prop = next((p for p in obj_def.properties if p.name == key), None)
+                if not prop or not prop.column:
+                    continue
+                col_ref = f"t0.{prop.column}"
+                if fuzzy and prop.data_type == "TEXT" and not isinstance(value, dict):
+                    branch_clauses.append(f"{col_ref} LIKE ?")
+                    branch_params.append(f"%{value}%")
+                else:
+                    branch_clauses.append(_compile_condition(col_ref, value, branch_params))
+            if branch_clauses:
+                or_clauses.append("(" + " AND ".join(branch_clauses) + ")")
+                params.extend(branch_params)
+        if or_clauses:
+            where_clauses.append("(" + " OR ".join(or_clauses) + ")")
+
+    # ORDER BY：支持点号跨 Link，共享 join_cache
+    order_col_ref: Optional[str] = None
+    order_by_derived = False
+    if order_by:
+        if "." in order_by:
+            # 跨 Link ORDER BY：复用 join_cache & alias_counter
+            ob_parts = order_by.split(".")
+            ob_prop_name = ob_parts[-1]
+            ob_path = ob_parts[:-1]
+            current_type = object_type
+            current_alias = "t0"
+            for segment in ob_path:
+                cache_key = (current_alias, segment)
+                if cache_key in join_cache:
+                    current_alias = join_cache[cache_key]
+                    link, _ = _find_link_by_segment(current_type, segment)
+                    if link:
+                        current_type = (link.target_type if link.source_type == current_type else link.source_type)
+                    continue
+                link, direction = _find_link_by_segment(current_type, segment)
+                if link is None:
+                    raise ValueError(f"排序路径 '{order_by}' 中无法从 '{current_type}' 找到 '{segment}'")
+                new_alias = f"l{alias_counter[0]}"
+                alias_counter[0] += 1
+                if direction == "forward":
+                    target_table = OBJECT_TYPES[link.target_type].table
+                    join_clauses.append(
+                        f"LEFT JOIN {target_table} {new_alias} "
+                        f"ON {current_alias}.{link.source_fk} = {new_alias}.id"
+                    )
+                    current_type = link.target_type
+                else:
+                    source_table = OBJECT_TYPES[link.source_type].table
+                    join_clauses.append(
+                        f"LEFT JOIN {source_table} {new_alias} "
+                        f"ON {current_alias}.id = {new_alias}.{link.source_fk}"
+                    )
+                    current_type = link.source_type
+                join_cache[cache_key] = new_alias
+                current_alias = new_alias
+
+            ob_obj_def = OBJECT_TYPES.get(current_type)
+            if ob_obj_def:
+                ob_prop = next((p for p in ob_obj_def.properties if p.name == ob_prop_name), None)
+                if ob_prop and ob_prop.prop_type != "derived":
+                    order_col_ref = f"{current_alias}.{ob_prop.column}"
+        else:
+            order_prop = next((p for p in obj_def.properties if p.name == order_by), None)
+            if order_prop and order_prop.prop_type == "derived":
+                order_by_derived = True
+            elif order_prop and order_prop.column:
+                order_col_ref = f"t0.{order_prop.column}"
+
+    # 当存在 JOIN 时加 DISTINCT，防止多对多行膨胀
+    needs_distinct = bool(join_clauses) and not order_by_derived
+    select_clause = f"SELECT {'DISTINCT ' if needs_distinct else ''}{cols_str} FROM {obj_def.table} t0"
+
+    sql_parts = [select_clause]
+    sql_parts.extend(join_clauses)
 
     if where_clauses:
         sql_parts.append("WHERE " + " AND ".join(where_clauses))
 
-    # 判断是否为派生属性排序（派生属性在 Python 层计算，无法用 SQL ORDER BY）
-    order_by_derived = False
-    if order_by:
-        order_prop = next((p for p in obj_def.properties if p.name == order_by), None)
-        if order_prop and order_prop.prop_type == "derived":
-            order_by_derived = True
-        else:
-            col = f"t0.{order_prop.column}" if order_prop and order_prop.column else order_by
-            direction = "DESC" if order_dir.lower() == "desc" else "ASC"
-            sql_parts.append(f"ORDER BY {col} {direction}")
+    if order_col_ref:
+        direction = "DESC" if order_dir.lower() == "desc" else "ASC"
+        sql_parts.append(f"ORDER BY {order_col_ref} {direction}")
 
     if order_by_derived:
-        # 派生属性排序：先取所有匹配行（含安全上限），fill 后 Python 排序再切片
         sql_parts.append("LIMIT 1000 OFFSET 0")
     else:
         sql_parts.append("LIMIT ? OFFSET ?")
@@ -386,12 +549,11 @@ def query_objects_v2(
 
     fill_derived_batch(results, object_type)
 
-    # 派生属性排序：fill 完成后在 Python 层排序，再应用 limit/offset
     if order_by_derived:
         reverse = order_dir.lower() == "desc"
         results.sort(
             key=lambda x: (x.get(order_by) is None, x.get(order_by) or 0),
-            reverse=reverse
+            reverse=reverse,
         )
         results = results[offset: offset + limit]
 
