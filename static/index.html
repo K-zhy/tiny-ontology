@@ -592,11 +592,13 @@ function expandNode(nodeId){
   relatedEdges.forEach(function(e){relatedNodes.add(e.from);relatedNodes.add(e.to);});
   var visibleNodes=graphData.nodes.map(function(n){
     var c=nodeColors[n.group]||'#888';
+    var isRelated=relatedNodes.has(n.id);
     return{
       id:n.id,
-      color:relatedNodes.has(n.id)?{background:c,border:'#111',highlight:{background:c,border:'#111'}}:{background:'#e8e2d8',border:'#ccc'},
-      shape:'dot',size:relatedNodes.has(n.id)?24:6,
-      font:{size:relatedNodes.has(n.id)?13:0,color:'#2c2416',face:'DM Sans',strokeWidth:2,strokeColor:'#fefdfb'},hidden:false,
+      label:isRelated?n.label:'',
+      color:isRelated?{background:c,border:'#111',highlight:{background:c,border:'#111'}}:{background:'#e8e2d8',border:'#ccc'},
+      shape:'dot',size:isRelated?24:6,
+      font:{size:isRelated?13:0,color:'#2c2416',face:'DM Sans',strokeWidth:2,strokeColor:'#fefdfb'},hidden:false,
     };
   });
   var visibleEdges=graphData.edges.filter(function(e){return relatedNodes.has(e.from)||relatedNodes.has(e.to);})
