@@ -339,6 +339,10 @@ async def handle_graph_query(query_text: str, max_iterations: int = 20) -> dict:
     graph = get_graph()
     system_prompt = build_system_prompt()
     tool_schemas = build_tool_schemas()
+
+    # 可用工具摘要（供前端展示）
+    available_tools = [{"name": t["name"], "description": t["description"]} for t in tool_schemas]
+
     exploration_path = []
     messages = [{"role": "user", "content": query_text}]
     final_answer = None
@@ -348,23 +352,31 @@ async def handle_graph_query(query_text: str, max_iterations: int = 20) -> dict:
         content_blocks = resp.get("content", [])
         tool_use_blocks = [b for b in content_blocks if b.get("type") == "tool_use"]
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
+        reasoning = " ".join(text_parts).strip() if text_parts and tool_use_blocks else ""
 
         if tool_use_blocks:
             messages.append({"role": "assistant", "content": content_blocks})
             tool_results_content = []
+            first = True
             for tool in tool_use_blocks:
                 tool_name = tool["name"]
                 tool_input = tool.get("input", {})
                 tool_id = tool.get("id", "")
                 tool_result = execute_tool(graph, tool_name, tool_input)
-                exploration_path.append({
+                entry = {
                     "step": iteration + 1,
                     "tool_name": tool_name,
                     "tool_input": tool_input,
                     "tool_result_summary": tool_result["summary"],
                     "visited_node_keys": tool_result.get("visited_node_keys", []),
                     "visited_edges": tool_result.get("visited_edges", []),
-                })
+                }
+                if first:
+                    if reasoning:
+                        entry["reasoning"] = reasoning
+                    entry["available_tools"] = available_tools
+                    first = False
+                exploration_path.append(entry)
                 content = tool_result["content"]
                 if iteration + 1 >= 2:
                     content += f"\n\n[已执行 {iteration + 1} 步。请直接用中文给出答案，不要再调工具。]"
@@ -405,4 +417,4 @@ async def handle_graph_query(query_text: str, max_iterations: int = 20) -> dict:
         else:
             final_answer = "未找到相关信息"
 
-    return {"success": True, "answer": final_answer, "exploration_path": exploration_path}
+    return {"success": True, "answer": final_answer, "exploration_path": exploration_path, "available_tools": available_tools}

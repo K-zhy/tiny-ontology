@@ -98,10 +98,10 @@ body {
 .header .ctrl-group button.active { background: var(--ink); color: #fff; border-color: var(--ink); }
 
 /* ---- main: graph + info sidebar ---- */
-.main { display: flex; flex: 1; min-height: 0; }
+.main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
 
 .graph-zone {
-  flex: 1; display: flex; flex-direction: column;
+  flex: 0 0 360px; display: flex; flex-direction: column;
   background: #fefdfb; min-width: 0;
   overflow: hidden;
 }
@@ -125,14 +125,16 @@ body {
 
 /* ---- info sidebar ---- */
 .info-sidebar {
-  width: 300px; display: flex; flex-direction: column;
-  background: var(--bg-surface); border-left: 1px solid var(--border);
-  overflow-y: auto; flex-shrink: 0;
+  flex: 1; min-width: 240px; display: flex; flex-direction: column;
+  background: var(--bg-surface);
+  overflow: hidden;
 }
 .info-sidebar::-webkit-scrollbar { width:4px; }
 .info-sidebar::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
-.info-pane { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.info-pane { padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .info-pane:last-child { border-bottom: none; }
+.info-pane.pane-expand { flex: 1; min-height: 120px; display: flex; flex-direction: column; overflow: hidden; }
+.info-pane.pane-results { flex: 0 0 180px; min-height: 96px; overflow-y: auto; }
 .info-label {
   font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 500;
   color: var(--ink-muted); letter-spacing: 0.08em;
@@ -144,10 +146,128 @@ body {
   background: #faf5ee; border: 1px solid var(--border-lit);
   border-radius: var(--radius); border-left: 2px solid var(--accent);
 }
-.exploration-log { max-height: 280px; overflow-y: auto; }
+.exploration-log { flex: 1; min-height: 0; overflow-y: auto; }
+.exploration-log::-webkit-scrollbar { width:4px; }
+.exploration-log::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
+
+/* ---- Available Tools panel ---- */
+.tools-panel {
+  flex-shrink: 0; max-height: 180px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 8px;
+}
+.tools-panel::-webkit-scrollbar { width:4px; }
+.tools-panel::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
+.tools-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 5px 10px; cursor: pointer; user-select: none;
+  background: var(--bg-base); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 1;
+}
+.tools-panel-header span {
+  font-family: 'JetBrains Mono', monospace; font-size: 9px; font-weight: 600;
+  color: var(--ink-muted); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.tools-panel-header .tp-count { color: var(--sage); }
+.tools-panel-header .tp-arrow { font-size: 9px; color: var(--ink-muted); transition: transform 0.2s; }
+.tools-panel-header.open .tp-arrow { transform: rotate(90deg); }
+.tools-panel-body { display: none; padding: 4px 0; }
+.tools-panel-body.open { display: block; }
+.tool-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 4px 10px; border-bottom: 1px solid var(--border);
+}
+.tool-item:last-child { border-bottom: none; }
+.tool-item .ti-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  color: var(--sage); white-space: nowrap; flex-shrink: 0; min-width: 120px;
+}
+.tool-item .ti-desc { font-size: 10px; color: var(--ink-soft); line-height: 1.4; }
+
+/* ---- Round blocks ---- */
+.round-block {
+  border: 1px solid var(--border); border-radius: var(--radius);
+  margin-bottom: 6px; overflow: hidden;
+}
+.round-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 10px; cursor: pointer; user-select: none;
+  background: var(--bg-base); border-bottom: 1px solid transparent;
+  transition: background var(--ease);
+}
+.round-header:hover { background: #f0ece3; }
+.round-header .round-label {
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600;
+  color: var(--ink); letter-spacing: 0.04em;
+}
+.round-header .round-calls { font-size: 10px; color: var(--ink-muted); flex: 1; }
+.round-header .round-arrow { font-size: 9px; color: var(--ink-muted); transition: transform 0.2s; }
+.round-body { display: none; padding: 6px 10px; border-top: 1px solid var(--border); }
+.round-body.open { display: block; }
+
+/* ---- Call card (per tool call inside a round) ---- */
+.call-card {
+  margin-bottom: 4px; border: 1px solid var(--border); border-radius: 2px;
+  overflow: hidden;
+}
+.call-card:last-child { margin-bottom: 0; }
+.call-card-header {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 8px; background: var(--bg-surface);
+}
+.call-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px; font-weight: 600; color: var(--ink);
+}
+.call-summary { font-size: 10px; color: var(--sage); flex: 1; margin-left: 4px; }
+.call-input {
+  padding: 3px 8px; font-size: 10px; color: var(--ink-muted);
+  word-break: break-all; border-top: 1px solid var(--border);
+  background: #fdfaf6; font-family: 'JetBrains Mono', monospace;
+}
+
+.round-header .round-tools-badge {
+  font-size: 9px; color: var(--sage); background: #f0f4ec;
+  border: 1px solid #d5e0cf; border-radius: 10px;
+  padding: 1px 6px; margin-left: 2px;
+}
+
+/* ---- 每轮工具清单（嵌入 round-body） ---- */
+.round-tools {
+  margin-top: 6px; border: 1px solid var(--border); border-radius: 2px; overflow: hidden;
+}
+.round-tools-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 3px 8px; cursor: pointer; user-select: none;
+  background: #f7f4ee; font-size: 10px; color: var(--ink-muted);
+}
+.round-tools-header:hover { background: #f0ece3; }
+.round-tools-label { font-size: 10px; color: var(--ink-muted); }
+.round-tools-arrow { font-size: 9px; color: var(--ink-muted); }
+.round-tools-body { display: none; padding: 4px 8px; background: #fdfaf6; }
+.round-tools-body.open { display: block; }
+.round-tools-item {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 2px 0; border-bottom: 1px solid var(--border);
+}
+.round-tools-item:last-child { border-bottom: none; }
+.round-tools-item .ti-name {
+  font-family: 'JetBrains Mono', monospace; font-size: 9.5px; font-weight: 600;
+  color: var(--sage); white-space: nowrap; flex-shrink: 0; min-width: 110px;
+}
+.round-tools-item .ti-desc { font-size: 9.5px; color: var(--ink-soft); line-height: 1.3; }
+
+/* ---- Reasoning bubble ---- */
+.reasoning-bubble {
+  background: #f5f0e8; border: 1px solid var(--border-lit);
+  border-radius: var(--radius); border-left: 2px solid #c8a86e;
+  padding: 5px 9px; margin-bottom: 4px;
+  font-size: 10px; color: var(--ink-soft); font-style: italic; line-height: 1.5;
+}
+.reasoning-bubble::before { content: '💭 '; font-style: normal; }
+
 .exploration-step {
   display: flex; align-items: flex-start; gap: 8px;
-  padding: 5px 0; border-bottom: 1px solid var(--border);
+  padding: 6px 0; border-bottom: 1px solid var(--border);
   font-size: 11px; animation: fadeStep 0.25s ease;
 }
 .exploration-step:last-child { border-bottom: none; }
@@ -158,9 +278,17 @@ body {
   font-size: 10px; font-weight: 600; flex-shrink: 0;
   font-family: 'JetBrains Mono', monospace;
 }
-.exploration-step .step-tool { font-weight: 600; color: var(--ink); }
-.exploration-step .step-input { color: var(--ink-muted); font-size: 10px; }
-.exploration-step .step-summary { color: var(--sage); }
+.exploration-step .step-tool {
+  font-weight: 600; color: var(--ink);
+  font-family: 'JetBrains Mono', monospace; font-size: 10.5px;
+}
+.exploration-step .step-input { color: var(--ink-muted); font-size: 10px; margin-top: 1px; word-break: break-all; }
+.exploration-step .step-summary { color: var(--sage); font-size: 10px; margin-top: 2px; }
+.step-tag {
+  display: inline-block; padding: 1px 5px; border-radius: 2px;
+  font-size: 9px; font-weight: 600; margin-right: 4px;
+  background: #e8f0ec; color: var(--sage);
+}
 @keyframes fadeStep { from { opacity:0; transform:translateY(-3px); } to { opacity:1; transform:translateY(0); } }
 
 .result-table { width:100%; border-collapse:collapse; font-size:11px; }
@@ -175,11 +303,47 @@ body {
 .badge-pass { background: #e8f0ec; color: var(--sage); }
 .badge-fail { background: #fce8e5; color: var(--accent); }
 
+/* ---- resize handles ---- */
+/* horizontal (bottom panel) */
+.resize-handle {
+  height: 5px; flex-shrink: 0; cursor: ns-resize;
+  background: var(--border); position: relative; z-index: 10;
+  transition: background var(--ease);
+}
+.resize-handle::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%);
+  width: 36px; height: 3px; border-radius: 2px;
+  background: var(--border-lit);
+}
+.resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
+.resize-handle:hover::after, .resize-handle.dragging::after { background: #fff; }
+
+.sidebar-resize-handle {
+  height: 5px; margin: 0 10px; border-radius: 2px;
+}
+/* vertical (graph | sidebar) */
+.resize-handle-v {
+  width: 5px; flex-shrink: 0; cursor: ew-resize;
+  background: var(--border); position: relative; z-index: 10;
+  transition: background var(--ease);
+}
+.resize-handle-v::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%,-50%);
+  width: 3px; height: 36px; border-radius: 2px;
+  background: var(--border-lit);
+}
+.resize-handle-v:hover, .resize-handle-v.dragging { background: var(--accent); }
+.resize-handle-v:hover::after, .resize-handle-v.dragging::after { background: #fff; }
+
 /* ---- bottom panel (tabbed) ---- */
 .bottom-panel {
-  border-top: 1px solid var(--border); background: var(--bg-surface);
+  border-top: none; background: var(--bg-surface);
   flex-shrink: 0; display: flex; flex-direction: column;
+  height: 240px; min-height: 48px; overflow: hidden;
 }
+.bottom-panel.collapsed { height: 37px !important; }
 .bottom-panel.collapsed .tab-content { display: none; }
 .tab-bar {
   display: flex; align-items: center; padding: 0 14px;
@@ -199,7 +363,7 @@ body {
   cursor: pointer; font-size: 14px; line-height: 1;
 }
 
-.tab-content { padding: 14px 18px; overflow-y: auto; max-height: 300px; display: none; }
+.tab-content { padding: 10px 14px; overflow-y: auto; height: calc(100% - 37px); display: none; }
 .tab-content.active { display: block; }
 .tab-content::-webkit-scrollbar { width:4px; }
 .tab-content::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
@@ -326,22 +490,35 @@ body {
     <div id="graph-container"></div>
   </div>
 
+  <div class="resize-handle-v" id="resize-handle-v"></div>
+
   <aside class="info-sidebar">
     <div class="info-pane">
       <div class="info-label">Answer</div>
       <div id="answerBox" class="answer-box"></div>
     </div>
-    <div class="info-pane" id="explorationLog" style="display:none;">
-      <div class="info-label">Exploration</div>
+    <div class="info-pane pane-expand" id="explorationLog" style="display:none;">
+      <div class="info-label" id="exploration-label" style="flex-shrink:0;">Exploration &mdash; <span id="exploration-mode-tag" style="color:var(--accent);">OAG</span></div>
+      <!-- 可用工具面板 -->
+      <div class="tools-panel" id="tools-panel" style="display:none;">
+        <div class="tools-panel-header" onclick="toggleToolsPanel()">
+          <span>Available Tools &nbsp;<span class="tp-count" id="tp-count"></span></span>
+          <span class="tp-arrow">▶</span>
+        </div>
+        <div class="tools-panel-body" id="tp-body"></div>
+      </div>
+      <!-- 推断轨迹 -->
       <div class="exploration-log" id="explorationLogInner"></div>
     </div>
-    <div class="info-pane" id="results-pane">
+    <div class="resize-handle sidebar-resize-handle" id="sidebar-resize-handle" title="Drag to resize results"></div>
+    <div class="info-pane pane-results" id="results-pane">
       <div class="info-label">Results</div>
       <div id="results"><span class="muted">Awaiting query&hellip;</span></div>
     </div>
   </aside>
 </div>
 
+<div class="resize-handle" id="resize-handle"></div>
 <div class="bottom-panel" id="bottom-panel">
   <div class="tab-bar">
     <button class="tab-btn active" data-tab="functions" onclick="switchTab('functions')">Functions <span id="func-count" style="font-size:10px;color:var(--ink-muted);"></span></button>
@@ -624,8 +801,8 @@ async function nlQuery(){
       var box=document.getElementById('answerBox');
       box.style.display='block';box.textContent=data.answer;
     }
-    if(nlQueryMode==='oag'){renderOagExploration(data.exploration_log||[]);}
-    else if(nlQueryMode==='graph'){renderExplorationPath(data.exploration_path||[]);}
+    if(nlQueryMode==='oag'){renderOagExploration(data.exploration_log||[], data.available_tools||[]);}
+    else if(nlQueryMode==='graph'){renderExplorationPath(data.exploration_path||[], data.available_tools||[]);}
     else{renderResults(data);}
   }catch(e){
     document.getElementById('answerBox').style.display='block';
@@ -638,38 +815,185 @@ function switchNlMode(mode){
   document.getElementById('btn-mode-oag').classList.toggle('active',mode==='oag');
   document.getElementById('btn-mode-graph').classList.toggle('active',mode==='graph');
   document.getElementById('btn-mode-batch').classList.toggle('active',mode==='batch');
+  var modeTag = document.getElementById('exploration-mode-tag');
+  if(modeTag) modeTag.textContent = mode==='oag'?'AIP Logic':mode==='graph'?'Graph Walk':'Batch Plan';
   document.getElementById('explorationLog').style.display='none';
   document.getElementById('explorationLogInner').innerHTML='';
+  document.getElementById('answerBox').style.display='none';
   var inp=document.getElementById('nlInput');
   if(mode==='oag'){inp.placeholder='张三高等数学多少分';}
   else if(mode==='graph'){inp.placeholder='查张三所有课程的平均分';}
-  else{inp.placeholder='查张三所有课程的平均分';}
+  else{inp.placeholder='查张三的所有成绩';}
 }
 
-function renderOagExploration(log){
+/* ---- 每轮工具清单 ---- */
+function buildRoundToolsHtml(tools, roundId){
+  if(!tools||!tools.length) return '';
+  var bodyId = roundId+'-tools';
+  var html = '<div class="round-tools">'
+    +'<div class="round-tools-header" onclick="toggleRoundTools(\''+bodyId+'\')">'
+      +'<span class="round-tools-label">Available Tools ('+tools.length+')</span>'
+      +'<span class="round-tools-arrow" id="'+bodyId+'-arrow">▶</span>'
+    +'</div>'
+    +'<div class="round-tools-body" id="'+bodyId+'">';
+  tools.forEach(function(t){
+    html += '<div class="round-tools-item">'
+      +'<span class="ti-name">'+escHtml(t.name)+'</span>'
+      +'<span class="ti-desc">'+escHtml((t.description||'').slice(0,80))+'</span>'
+      +'</div>';
+  });
+  html += '</div></div>';
+  return html;
+}
+
+function toggleRoundTools(bodyId){
+  var body = document.getElementById(bodyId);
+  if(!body) return;
+  var open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  var arrow = document.getElementById(bodyId+'-arrow');
+  if(arrow) arrow.textContent = open ? '▶' : '▼';
+}
+
+function renderOagExploration(log, availableTools){
   var logPane=document.getElementById('explorationLog');
   var logEl=document.getElementById('explorationLogInner');
-  logPane.style.display='block';
+  logPane.style.display='flex';
+  // 隐藏旧的全局工具面板
+  var globalPanel=document.getElementById('tools-panel');
+  if(globalPanel) globalPanel.style.display='none';
   if(!log||!log.length){logEl.innerHTML='<span class="muted">No steps (direct answer)</span>';return;}
+
+  // 按轮次（step 值）分组
+  var rounds={};
+  log.forEach(function(step){
+    var k = step.step;
+    if(!rounds[k]) rounds[k]=[];
+    rounds[k].push(step);
+  });
+
   var html='';
-  log.forEach(function(step,i){
-    html+='<div class="exploration-step"><div class="step-num">'+(i+1)+'</div><div class="step-info"><div class="step-tool">'+step.tool+'</div><div class="step-input">'+JSON.stringify(step.input)+'</div><div class="step-summary">'+step.summary+'</div></div></div>';
+  Object.keys(rounds).sort(function(a,b){return +a-+b;}).forEach(function(roundKey){
+    var steps = rounds[roundKey];
+    var reasoning = (steps[0] && steps[0].reasoning) ? steps[0].reasoning : '';
+    var roundTools = (steps[0] && steps[0].available_tools) ? steps[0].available_tools : availableTools;
+    var roundNum = +roundKey;
+    var roundLabel = roundNum === 0 ? 'Init' : 'Round ' + roundNum;
+    var roundId = 'round-oag-'+roundKey;
+
+    html += '<div class="round-block">';
+    html += '<div class="round-header" onclick="toggleRound(\''+roundId+'\')">'
+      +'<span class="round-label">'+roundLabel+'</span>'
+      +'<span class="round-calls">'+steps.length+' call'+(steps.length>1?'s':'')+'</span>'
+      +'<span class="round-tools-badge">'+roundTools.length+' tools</span>'
+      +'<span class="round-arrow">▶</span>'
+      +'</div>';
+    html += '<div class="round-body open" id="'+roundId+'">';
+    if(reasoning) html += '<div class="reasoning-bubble">'+escHtml(reasoning.slice(0,300))+'</div>';
+    steps.forEach(function(step){
+      var inputStr = typeof step.input==='object' ? JSON.stringify(step.input) : String(step.input||'');
+      if(inputStr.length>200) inputStr=inputStr.slice(0,200)+'…';
+      html += '<div class="call-card">'
+        +'<div class="call-card-header">'
+          +'<span class="step-tag">OAG</span>'
+          +'<span class="call-name">'+escHtml(step.tool)+'</span>'
+          +'<span class="call-summary">'+escHtml(step.summary)+'</span>'
+        +'</div>'
+        +'<div class="call-input">'+escHtml(inputStr)+'</div>'
+        +'</div>';
+    });
+    html += buildRoundToolsHtml(roundTools, roundId);
+    html += '</div></div>';
   });
   logEl.innerHTML=html;
 }
 
-function renderExplorationPath(path){
+function renderExplorationPath(path, availableTools){
   var logPane=document.getElementById('explorationLog');
   var logEl=document.getElementById('explorationLogInner');
-  logPane.style.display='block';
+  logPane.style.display='flex';
+  var globalPanel=document.getElementById('tools-panel');
+  if(globalPanel) globalPanel.style.display='none';
   if(!path||!path.length){logEl.innerHTML='<span class="muted">No steps</span>';return;}
+
+  // 按轮次（step 值）分组
+  var rounds={};
+  path.forEach(function(step){
+    var k = step.step;
+    if(!rounds[k]) rounds[k]=[];
+    rounds[k].push(step);
+  });
+
   var html='';
-  path.forEach(function(step,i){
-    html+='<div class="exploration-step"><div class="step-num">'+(i+1)+'</div><div class="step-info"><div class="step-tool">'+step.tool_name+'</div><div class="step-input">'+JSON.stringify(step.tool_input)+'</div><div class="step-summary">'+step.tool_result_summary+'</div></div></div>';
+  Object.keys(rounds).sort(function(a,b){return +a-+b;}).forEach(function(roundKey){
+    var steps = rounds[roundKey];
+    var reasoning = (steps[0] && steps[0].reasoning) ? steps[0].reasoning : '';
+    var roundTools = (steps[0] && steps[0].available_tools) ? steps[0].available_tools : availableTools;
+    var roundId = 'round-graph-'+roundKey;
+
+    html += '<div class="round-block">';
+    html += '<div class="round-header" onclick="toggleRound(\''+roundId+'\')">'
+      +'<span class="round-label">Round '+roundKey+'</span>'
+      +'<span class="round-calls">'+steps.length+' call'+(steps.length>1?'s':'')+'</span>'
+      +'<span class="round-tools-badge">'+roundTools.length+' tools</span>'
+      +'<span class="round-arrow">▶</span>'
+      +'</div>';
+    html += '<div class="round-body open" id="'+roundId+'">';
+    if(reasoning) html += '<div class="reasoning-bubble">'+escHtml(reasoning.slice(0,300))+'</div>';
+    steps.forEach(function(step){
+      var inputStr = typeof step.tool_input==='object' ? JSON.stringify(step.tool_input) : String(step.tool_input||'');
+      if(inputStr.length>200) inputStr=inputStr.slice(0,200)+'…';
+      html += '<div class="call-card">'
+        +'<div class="call-card-header">'
+          +'<span class="step-tag" style="background:#eef0fa;color:#5060b0;">Walk</span>'
+          +'<span class="call-name">'+escHtml(step.tool_name)+'</span>'
+          +'<span class="call-summary">'+escHtml(step.tool_result_summary)+'</span>'
+        +'</div>'
+        +'<div class="call-input">'+escHtml(inputStr)+'</div>'
+        +'</div>';
+    });
+    html += buildRoundToolsHtml(roundTools, roundId);
+    html += '</div></div>';
   });
   logEl.innerHTML=html;
   animateExploration(path);
 }
+
+function toggleRound(id){
+  var body = document.getElementById(id);
+  if(!body) return;
+  var open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  var header = body.previousElementSibling;
+  if(header) header.querySelector('.round-arrow').textContent = open ? '▶' : '▼';
+}
+
+function renderToolsPanel(tools){
+  var panel = document.getElementById('tools-panel');
+  var body = document.getElementById('tp-body');
+  var count = document.getElementById('tp-count');
+  if(!tools||!tools.length){ panel.style.display='none'; return; }
+  panel.style.display='block';
+  count.textContent='('+tools.length+')';
+  var html='';
+  tools.forEach(function(t){
+    html+='<div class="tool-item">'
+      +'<span class="ti-name">'+t.name+'</span>'
+      +'<span class="ti-desc">'+escHtml(t.description.slice(0,80))+'</span>'
+    +'</div>';
+  });
+  body.innerHTML=html;
+}
+
+function toggleToolsPanel(){
+  var header = document.querySelector('.tools-panel-header');
+  var body = document.getElementById('tp-body');
+  var open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  header.classList.toggle('open', !open);
+}
+
+function escHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 function animateExploration(path){
   if(currentView!=='instance')switchView('instance');
@@ -754,7 +1078,11 @@ function switchTab(name) {
 }
 
 function toggleBottomPanel() {
-  document.getElementById('bottom-panel').classList.toggle('collapsed');
+  var panel = document.getElementById('bottom-panel');
+  var handle = document.getElementById('resize-handle');
+  panel.classList.toggle('collapsed');
+  handle.style.cursor = panel.classList.contains('collapsed') ? 'default' : 'ns-resize';
+  document.querySelector('.tab-toggle').textContent = panel.classList.contains('collapsed') ? '▲' : '▼';
 }
 
 // ======================== Raw Tables ========================
@@ -807,6 +1135,98 @@ function toggleRawTable(id, header) {
   if (isOpen) { body.classList.remove('open'); header.classList.remove('open'); }
   else { body.classList.add('open'); header.classList.add('open'); }
 }
+
+// ======================== Bottom Panel Resize ========================
+(function(){
+  var handle = document.getElementById('resize-handle');
+  var panel = document.getElementById('bottom-panel');
+  var isDragging = false, startY = 0, startH = 0;
+  handle.addEventListener('mousedown', function(e){
+    if(panel.classList.contains('collapsed')) return;
+    isDragging = true; startY = e.clientY; startH = panel.offsetHeight;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function(e){
+    if(!isDragging) return;
+    var delta = startY - e.clientY;
+    var newH = Math.max(48, Math.min(window.innerHeight * 0.75, startH + delta));
+    panel.style.height = newH + 'px';
+  });
+  document.addEventListener('mouseup', function(){
+    if(isDragging){ isDragging = false; handle.classList.remove('dragging'); document.body.style.cursor=''; document.body.style.userSelect=''; }
+  });
+})();
+
+// ======================== Vertical (Graph | Sidebar) Resize ========================
+(function(){
+  var handle = document.getElementById('resize-handle-v');
+  var graphZone = document.querySelector('.graph-zone');
+  var isDragging = false, startX = 0, startW = 0;
+  handle.addEventListener('mousedown', function(e){
+    isDragging = true; startX = e.clientX; startW = graphZone.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', function(e){
+    if(!isDragging) return;
+    var delta = e.clientX - startX;
+    var newW = Math.max(160, Math.min(window.innerWidth * 0.6, startW + delta));
+    graphZone.style.flex = '0 0 ' + newW + 'px';
+  });
+  document.addEventListener('mouseup', function(){
+    if(isDragging){ isDragging = false; handle.classList.remove('dragging'); document.body.style.cursor=''; document.body.style.userSelect=''; }
+  });
+})();
+
+(function(){
+  var handle = document.getElementById('sidebar-resize-handle');
+  var sidebar = document.querySelector('.info-sidebar');
+  var resultsPane = document.getElementById('results-pane');
+  var explorationPane = document.getElementById('explorationLog');
+  var answerPane = document.querySelector('.info-sidebar .info-pane:not(.pane-expand):not(.pane-results)');
+  var isDragging = false, startY = 0, startH = 0;
+
+  function isVisible(el){
+    return !!el && getComputedStyle(el).display !== 'none';
+  }
+
+  handle.addEventListener('mousedown', function(e){
+    isDragging = true;
+    startY = e.clientY;
+    startH = resultsPane.offsetHeight;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e){
+    if(!isDragging) return;
+    var delta = startY - e.clientY;
+    var sidebarHeight = sidebar.clientHeight;
+    var answerHeight = isVisible(answerPane) ? answerPane.offsetHeight : 0;
+    var minBottom = 96;
+    var minTop = isVisible(explorationPane) ? 120 : 0;
+    var maxH = Math.max(minBottom, sidebarHeight - answerHeight - handle.offsetHeight - minTop);
+    var newH = Math.max(minBottom, Math.min(maxH, startH + delta));
+    resultsPane.style.flex = '0 0 ' + newH + 'px';
+    resultsPane.style.height = newH + 'px';
+  });
+
+  document.addEventListener('mouseup', function(){
+    if(isDragging){
+      isDragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+    }
+  });
+})();
 
 loadGraph();
 </script>

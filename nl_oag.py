@@ -494,6 +494,9 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
     system_prompt = build_system_prompt(relevant_types)
     tool_schemas = build_tool_schemas(relevant_types) + build_object_bound_tool_schemas(relevant_types)
 
+    # 可用工具摘要（供前端展示）
+    available_tools = [{"name": t["name"], "description": t["description"]} for t in tool_schemas]
+
     messages = [{"role": "user", "content": query_text}]
     exploration_log = [{"step": 0, "tool": "type_inference", "input": {"query": query_text}, "summary": f"推断相关对象类型: {', '.join(relevant_types)}"}]
     final_answer = None
@@ -503,16 +506,25 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
         content_blocks = resp.get("content", [])
         tool_use_blocks = [b for b in content_blocks if b.get("type") == "tool_use"]
         text_parts = [b["text"] for b in content_blocks if b.get("type") == "text"]
+        # 本轮 LLM 在调工具前输出的推断文本
+        reasoning = " ".join(text_parts).strip() if text_parts and tool_use_blocks else ""
 
         if tool_use_blocks:
             messages.append({"role": "assistant", "content": content_blocks})
             tool_results_content = []
+            first = True
             for tool in tool_use_blocks:
                 tool_name = tool["name"]
                 tool_input = tool.get("input", {})
                 tool_id = tool.get("id", "")
                 tool_result = execute_tool(tool_name, tool_input)
-                exploration_log.append({"step": iteration + 1, "tool": tool_name, "input": tool_input, "summary": tool_result["summary"]})
+                entry = {"step": iteration + 1, "tool": tool_name, "input": tool_input, "summary": tool_result["summary"]}
+                if first:
+                    if reasoning:
+                        entry["reasoning"] = reasoning
+                    entry["available_tools"] = available_tools
+                    first = False
+                exploration_log.append(entry)
                 tool_results_content.append({"type": "tool_result", "tool_use_id": tool_id, "content": tool_result["content"]})
 
             if iteration + 1 >= 2 and tool_results_content:
@@ -533,4 +545,4 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
     if final_answer is None:
         final_answer = "未找到相关信息"
 
-    return {"success": True, "answer": final_answer, "exploration_log": exploration_log}
+    return {"success": True, "answer": final_answer, "exploration_log": exploration_log, "available_tools": available_tools}
