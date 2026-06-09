@@ -15,7 +15,7 @@ from ontology_engine.registry import (
 )
 from ontology_engine.query import (
     get_object, query_objects_v2, query_object_set, fill_derived_batch,
-    aggregate_objects,
+    aggregate_objects, exclude_objects,
 )
 from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
@@ -133,7 +133,7 @@ async def call_llm(system: str, tools: list[dict], messages: list[dict]) -> dict
 
 
 # ---- 对象类型推断 ----
-
+# 后续可升级，当前结构过于简单
 def infer_relevant_types(query_text: str) -> list[str]:
     """从查询文本推断涉及的对象类型（关键词匹配，无需额外 LLM 调用）"""
     type_keywords = {
@@ -354,8 +354,58 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
                     },
                     "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向（默认 desc）"},
                     "limit": {"type": "integer", "description": "返回上限（默认 50）"},
+                    "having": {
+                        "type": "object",
+                        "description": (
+                            "HAVING 过滤：对聚合结果进行过滤。键为聚合别名(name)，值为运算符格式。\n"
+                            "示例: {\"cnt\": {\"op\": \"gte\", \"value\": 3}, \"avg_score\": {\"op\": \"gt\", \"value\": 80}}"
+                        ),
+                    },
                 },
                 "required": ["object_type", "aggregations"],
+            },
+        },
+        {
+            "name": "exclude_objects",
+            "description": (
+                "否定查询：找出「不存在」某种关联的对象。用于回答'哪些学生没有选过X课/X老师的课'、'哪些课没被Y班学生修读'等否定型问题。\n"
+                "原理：对主对象做 NOT EXISTS 子查询，排除掉通过 Link 关联到满足条件的目标对象。"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": relevant_types,
+                        "description": "主查询对象类型（要返回的对象类型）",
+                    },
+                    "exclude_link": {
+                        "type": "string",
+                        "description": (
+                            "关联路径名（Link 的 api_name 或 reverse_name）。\n"
+                            "如 Student 的反向关联名为 'scores'(Score->Student)，Course 的反向名为 'scores'(Score->Course)。"
+                        ),
+                    },
+                    "exclude_target_type": {
+                        "type": "string",
+                        "enum": relevant_types,
+                        "description": "关联目标类型（被排除的关联对象类型）",
+                    },
+                    "exclude_target_filters": {
+                        "type": "object",
+                        "description": (
+                            "对关联目标的过滤条件（格式同 query_objects 的 filters）。\n"
+                            "支持跨 Link 点号。为空表示'没有任何关联对象'。\n"
+                            "示例: {\"course.teacher.name\": \"李教授\"} 或 {\"scoreValue\": {\"op\": \"lt\", \"value\": 60}}"
+                        ),
+                    },
+                    "base_filters": {
+                        "type": "object",
+                        "description": "对主对象的基础过滤（如只看某个班的学生）",
+                    },
+                    "limit": {"type": "integer", "description": "返回上限（默认 50）"},
+                },
+                "required": ["object_type", "exclude_link", "exclude_target_type"],
             },
         },
     ]
@@ -445,14 +495,20 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 - "还没有老师的课程" → query_objects(type="Course", filters={{"teacherId": {{"op":"is_null"}}}})
 - "按课程名排序所有成绩" → query_objects(type="Score", order_by="course.name")
 - "有哪些女学生" → query_objects(type="Student", filters={{"gender": "F"}})
+- "哪些学生没有选修过李教授的课" → exclude_objects(object_type="Student", exclude_link="earnedBy", exclude_target_type="Score", exclude_target_filters={{"course.teacher.name":"李教授"}})
+- "哪些课程没被英语2201学生修读" → exclude_objects(object_type="Course", exclude_link="forCourse", exclude_target_type="Score", exclude_target_filters={{"student.className":"英语2201"}})
+- "每门课选课人数大于3的" → aggregate_objects(type="Score", aggregations=[{{"type":"count","name":"cnt"}}], group_by=["course.name"], having={{"cnt":{{"op":"gt","value":3}}}})
 
 ## 规则
 - **Score 结果已经包含 studentName、courseName、teacherName，不要再单独查 Student/Course！**
 - "低于/小于/不超过 N" 必须用 {{"op":"lt","value":N}} 或 {{"op":"lte","value":N}}，**禁止用等值 N 代替**
 - "高于/大于/超过 N" 必须用 {{"op":"gt","value":N}} 或 {{"op":"gte","value":N}}
+- **"超过X"=严格大于(gt)，"不低于X"=大于等于(gte)，"达到X"=大于等于(gte)** — 注意区分边界
 - 找最好/最差/最高/最低时用 order_by + order_dir + limit=1
 - **跨不同 Link 路径的 OR（如 高等数学低于80 OR 数据结构低于80）须拆成两次 query_objects，合并结果**
 - $or 仅支持同一对象的直接属性条件，不支持跨 Link
+- **否定查询（"没有"、"不存在"、"未修读"）务必使用 exclude_objects 工具**，不要尝试手动做集合差
+- **模糊匹配提示**：当用户口语表达可能与数据库精确值不同时（如"英语2201班" vs "英语2201"），使用 fuzzy=true 或 like 操作符（{{"op":"like","value":"%英语2201%"}}）
 - 知道某属性值但不知道具体类型时，先查对应类型，再用跨 Link 过滤
 - 找不到就说没找到，不编造数据
 - 跨 Link 过滤优先用点号语法，而非多步查询"""
@@ -617,13 +673,14 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
             if filters:
                 filters = normalize_filters(filters)
             group_by = inp.get("group_by")
+            having = inp.get("having")
             order_by = inp.get("order_by")
             order_dir = inp.get("order_dir", "desc")
             limit = min(inp.get("limit", 50), 200)
 
             result = aggregate_objects(
                 obj_type, aggregations=aggregations, filters=filters,
-                group_by=group_by, order_by=order_by, order_dir=order_dir, limit=limit,
+                group_by=group_by, having=having, order_by=order_by, order_dir=order_dir, limit=limit,
             )
             if not result.get("success"):
                 return {"content": f"聚合错误: {result.get('error')}", "summary": "agg error", "error": result.get("error")}
@@ -635,6 +692,41 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
             if len(data) > 20:
                 lines.append(f"  ...及其他 {len(data) - 20} 行")
             return {"content": "\n".join(lines), "summary": f"agg {obj_type}: {len(data)} rows", "data": data}
+
+        elif tool_name == "exclude_objects":
+            obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
+            exclude_link = inp.get("exclude_link", "")
+            exclude_target_type = TYPE_ALIASES.get(inp.get("exclude_target_type", ""), inp.get("exclude_target_type", ""))
+            exclude_target_filters = inp.get("exclude_target_filters")
+            if exclude_target_filters:
+                exclude_target_filters = normalize_filters(exclude_target_filters)
+            base_filters = inp.get("base_filters")
+            if base_filters:
+                base_filters = normalize_filters(base_filters)
+            limit = min(inp.get("limit", 50), 100)
+
+            results = exclude_objects(
+                obj_type,
+                exclude_link=exclude_link,
+                exclude_target_type=exclude_target_type,
+                exclude_target_filters=exclude_target_filters,
+                base_filters=base_filters,
+                limit=limit,
+            )
+            if not results:
+                return {"content": f"没有找到满足排除条件的 {obj_type} 对象", "summary": f"exclude empty {obj_type}", "data": []}
+            enrich_score_context(results)
+            lines = [f"排除后找到 {len(results)} 个 {obj_type} 对象："]
+            for obj in results[:15]:
+                parts = []
+                obj_name = obj.get("name", "")
+                for k, v in obj.items():
+                    if k.startswith("_") or k == "name":
+                        continue
+                    parts.append(f"{k}={v}")
+                label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
+                lines.append(f"  {obj_type}#{obj.get('id', '?')} '{label}': {', '.join(parts[:8])}")
+            return {"content": "\n".join(lines), "summary": f"exclude {obj_type}: {len(results)} results", "data": results}
 
         elif tool_name.startswith("fn_"):
             func_name = tool_name[3:]

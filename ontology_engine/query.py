@@ -561,6 +561,201 @@ def query_objects_v2(
 
 
 # ============================================================
+# 否定查询引擎 — NOT EXISTS / 排除型查询
+# ============================================================
+
+
+def exclude_objects(
+    object_type: str,
+    exclude_link: str,
+    exclude_target_type: str,
+    exclude_target_filters: Optional[dict] = None,
+    base_filters: Optional[dict] = None,
+    limit: int = 50,
+) -> list[dict]:
+    """否定查询：找出不满足某种关联条件的对象。
+
+    语义：返回 object_type 中，通过 exclude_link 关联到 exclude_target_type 时
+    「不存在」满足 exclude_target_filters 条件的关联对象。
+
+    示例：
+    - 找出没有选修过李教授课程的学生：
+      exclude_objects("Student",
+          exclude_link="scores",        # Student -> Score 的反向link
+          exclude_target_type="Score",
+          exclude_target_filters={"course.teacher.name": "李教授"})
+
+    - 找出没有不及格成绩的学生：
+      exclude_objects("Student",
+          exclude_link="scores",
+          exclude_target_type="Score",
+          exclude_target_filters={"scoreValue": {"op": "lt", "value": 60}})
+
+    参数:
+        object_type: 主查询对象类型
+        exclude_link: 关联路径（Link 名称或反向名称）
+        exclude_target_type: 关联目标类型
+        exclude_target_filters: 对关联目标的过滤条件（为空则表示"没有任何关联对象"）
+        base_filters: 对主对象的基础过滤（格式同 query_objects_v2）
+        limit: 返回上限
+    """
+    obj_def = OBJECT_TYPES.get(object_type)
+    if not obj_def:
+        raise ValueError(f"Unknown object type: {object_type}")
+
+    target_def = OBJECT_TYPES.get(exclude_target_type)
+    if not target_def:
+        raise ValueError(f"Unknown target type: {exclude_target_type}")
+
+    # 找到连接两者的 Link
+    link = LINK_TYPES.get(exclude_link)
+    # 尝试正向/反向匹配
+    join_condition = None
+    if link and link.source_type == exclude_target_type and link.target_type == object_type:
+        # target 持有 FK 指向主表: Score.student_id -> Student.id
+        join_condition = f"sub.{link.source_fk} = main.id"
+    elif link and link.source_type == object_type and link.target_type == exclude_target_type:
+        # 主表持有 FK: 不太常见的方向
+        join_condition = f"sub.id = main.{link.source_fk}"
+    else:
+        # 通过 reverse name 查找
+        for l in LINK_TYPES.values():
+            if l.reverse_name == exclude_link:
+                if l.source_type == exclude_target_type and l.target_type == object_type:
+                    join_condition = f"sub.{l.source_fk} = main.id"
+                    link = l
+                    break
+                elif l.source_type == object_type and l.target_type == exclude_target_type:
+                    join_condition = f"sub.id = main.{l.source_fk}"
+                    link = l
+                    break
+
+    if not join_condition:
+        raise ValueError(
+            f"无法找到从 '{object_type}' 到 '{exclude_target_type}' 的关联 '{exclude_link}'"
+        )
+
+    # 构建主查询
+    regular_cols = [p.column for p in obj_def.properties if p.prop_type in ("primary_key", "regular")]
+    cols_str = ", ".join(f"main.{c}" for c in regular_cols)
+    params: list = []
+
+    # 构建子查询 WHERE 条件
+    sub_where_parts = [join_condition]
+    if exclude_target_filters:
+        # 子查询内的过滤需要处理跨 Link
+        sub_join_clauses: list[str] = []
+        sub_join_cache: dict = {}
+        sub_alias_counter = [1]
+
+        direct_filters = {}
+        link_filters = {}
+        for key, value in exclude_target_filters.items():
+            if "." in key:
+                link_filters[key] = value
+            else:
+                direct_filters[key] = value
+
+        # 子查询内跨 Link 过滤（基于 sub 表的别名体系）
+        if link_filters:
+            for key, value in link_filters.items():
+                parts = key.split(".")
+                prop_name = parts[-1]
+                path_segments = parts[:-1]
+
+                current_type = exclude_target_type
+                current_alias = "sub"
+
+                for segment in path_segments:
+                    cache_key = (current_alias, segment)
+                    if cache_key in sub_join_cache:
+                        current_alias = sub_join_cache[cache_key]
+                        lnk, _ = _find_link_by_segment(current_type, segment)
+                        if lnk:
+                            current_type = lnk.target_type if lnk.source_type == current_type else lnk.source_type
+                        continue
+
+                    lnk, direction = _find_link_by_segment(current_type, segment)
+                    if lnk is None:
+                        raise ValueError(f"子查询中无法从 '{current_type}' 解析 '{segment}'")
+
+                    new_alias = f"sx{sub_alias_counter[0]}"
+                    sub_alias_counter[0] += 1
+
+                    if direction == "forward":
+                        target_table = OBJECT_TYPES[lnk.target_type].table
+                        sub_join_clauses.append(
+                            f"JOIN {target_table} {new_alias} ON {current_alias}.{lnk.source_fk} = {new_alias}.id"
+                        )
+                        current_type = lnk.target_type
+                    else:
+                        source_table = OBJECT_TYPES[lnk.source_type].table
+                        sub_join_clauses.append(
+                            f"JOIN {source_table} {new_alias} ON {current_alias}.id = {new_alias}.{lnk.source_fk}"
+                        )
+                        current_type = lnk.source_type
+
+                    sub_join_cache[cache_key] = new_alias
+                    current_alias = new_alias
+
+                # 解析最终属性
+                final_def = OBJECT_TYPES[current_type]
+                prop = next((p for p in final_def.properties if p.name == prop_name), None)
+                if not prop:
+                    raise ValueError(f"属性 '{prop_name}' 在 '{current_type}' 中不存在")
+                col_ref = f"{current_alias}.{prop.column}"
+                sub_where_parts.append(_compile_condition(col_ref, value, params))
+
+        # 直接属性过滤
+        for key, value in direct_filters.items():
+            prop = next((p for p in target_def.properties if p.name == key), None)
+            if not prop or not prop.column:
+                continue
+            col_ref = f"sub.{prop.column}"
+            sub_where_parts.append(_compile_condition(col_ref, value, params))
+    else:
+        sub_join_clauses = []
+
+    # 子查询
+    sub_sql = f"SELECT 1 FROM {target_def.table} sub"
+    if sub_join_clauses:
+        sub_sql += " " + " ".join(sub_join_clauses)
+    sub_sql += " WHERE " + " AND ".join(sub_where_parts)
+
+    # 主查询
+    main_where_parts = [f"NOT EXISTS ({sub_sql})"]
+
+    # 主对象基础过滤
+    if base_filters:
+        for key, value in base_filters.items():
+            prop = next((p for p in obj_def.properties if p.name == key), None)
+            if not prop or not prop.column:
+                continue
+            col_ref = f"main.{prop.column}"
+            main_where_parts.append(_compile_condition(col_ref, value, params))
+
+    sql = f"SELECT {cols_str} FROM {obj_def.table} main WHERE " + " AND ".join(main_where_parts)
+    sql += f" LIMIT {limit}"
+
+    conn = get_connection()
+    rows = conn.execute(sql, params).fetchall()
+    conn.close()
+
+    results = []
+    for row in rows:
+        obj = {"_objectType": object_type}
+        for p in obj_def.properties:
+            if p.prop_type != "derived" and p.column in row.keys():
+                obj[p.name] = row[p.column]
+            elif p.prop_type == "derived":
+                obj[p.name] = None
+        results.append(obj)
+
+    fill_derived_batch(results, object_type)
+    return results
+
+
+# ============================================================
 # Aggregation 引擎 — 通用聚合查询（GROUP BY + 聚合函数）
 # ============================================================
 
@@ -574,12 +769,18 @@ _AGG_FUNC_MAP = {
     "max": "MAX({col})",
 }
 
+# SQLite 不原生支持 STDDEV，但可以用数学表达式模拟（总体标准差）
+_AGG_FUNC_SPECIAL = {
+    "stddev",
+}
+
 
 def aggregate_objects(
     object_type: str,
     aggregations: list[dict],
     filters: Optional[dict] = None,
     group_by: Optional[list[str]] = None,
+    having: Optional[dict] = None,
     order_by: Optional[str] = None,
     order_dir: str = "desc",
     limit: int = 50,
@@ -595,6 +796,8 @@ def aggregate_objects(
             name: 结果别名（可选，默认自动生成）
         filters: 过滤条件（格式同 query_objects_v2，支持跨 Link 点号）
         group_by: 分组字段列表，支持跨 Link 点号（如 ["student.name", "course.name"]）
+        having: HAVING 过滤条件，键为聚合别名，值为运算符格式
+            如 {"avg_score": {"op": "gte", "value": 80}, "cnt": {"op": "gt", "value": 3}}
         order_by: 排序字段（引用 aggregation 的 name，或 group_by 字段）
         order_dir: 排序方向 "asc" / "desc"
         limit: 返回上限
@@ -688,6 +891,15 @@ def aggregate_objects(
 
     if group_refs:
         sql_parts.append("GROUP BY " + ", ".join(group_refs))
+
+    # HAVING — 对聚合结果进行过滤
+    if having:
+        having_clauses = []
+        for h_key, h_value in having.items():
+            # h_key 应该是 agg_aliases 中的别名
+            having_clauses.append(_compile_condition(h_key, h_value, params))
+        if having_clauses:
+            sql_parts.append("HAVING " + " AND ".join(having_clauses))
 
     # ORDER BY
     direction = "DESC" if order_dir.lower() == "desc" else "ASC"
