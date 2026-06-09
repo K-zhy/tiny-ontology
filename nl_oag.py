@@ -15,6 +15,7 @@ from ontology_engine.registry import (
 )
 from ontology_engine.query import (
     get_object, query_objects_v2, query_object_set, fill_derived_batch,
+    aggregate_objects,
 )
 from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
@@ -300,6 +301,63 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
                 "required": ["action_name"],
             },
         },
+        {
+            "name": "aggregate_objects",
+            "description": (
+                "通用聚合查询，支持对任意对象类型按维度分组统计。"
+                "适用于：计数、求和、平均、最大/最小值、分组统计等。"
+                "支持跨 Link 点号分组（如按 teacher.name 分组统计 Score）。"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "object_type": {
+                        "type": "string",
+                        "enum": relevant_types,
+                        "description": "聚合的基础对象类型",
+                    },
+                    "aggregations": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["count", "count_distinct", "sum", "avg", "min", "max"],
+                                    "description": "聚合函数类型",
+                                },
+                                "field": {
+                                    "type": "string",
+                                    "description": "聚合字段（支持跨Link点号如 student.age）。count 可不传 field。",
+                                },
+                                "name": {
+                                    "type": "string",
+                                    "description": "结果别名（可选）",
+                                },
+                            },
+                            "required": ["type"],
+                        },
+                        "description": "聚合定义列表",
+                    },
+                    "filters": {
+                        "type": "object",
+                        "description": "过滤条件（格式同 query_objects 的 filters，支持跨 Link 点号和运算符）",
+                    },
+                    "group_by": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "分组字段列表，支持跨 Link 点号（如 [\"student.name\", \"course.name\"]）",
+                    },
+                    "order_by": {
+                        "type": "string",
+                        "description": "排序字段（可以是 aggregation 的 name 或 group_by 字段别名如 student_name）",
+                    },
+                    "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向（默认 desc）"},
+                    "limit": {"type": "integer", "description": "返回上限（默认 50）"},
+                },
+                "required": ["object_type", "aggregations"],
+            },
+        },
     ]
 
 
@@ -551,6 +609,32 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
             if result.get("success"):
                 reload_graph()
             return {"content": json.dumps(result, ensure_ascii=False), "summary": f"executed {action_name}", "data": result, "error": result.get("error")}
+
+        elif tool_name == "aggregate_objects":
+            obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
+            aggregations = inp.get("aggregations", [])
+            filters = inp.get("filters", {})
+            if filters:
+                filters = normalize_filters(filters)
+            group_by = inp.get("group_by")
+            order_by = inp.get("order_by")
+            order_dir = inp.get("order_dir", "desc")
+            limit = min(inp.get("limit", 50), 200)
+
+            result = aggregate_objects(
+                obj_type, aggregations=aggregations, filters=filters,
+                group_by=group_by, order_by=order_by, order_dir=order_dir, limit=limit,
+            )
+            if not result.get("success"):
+                return {"content": f"聚合错误: {result.get('error')}", "summary": "agg error", "error": result.get("error")}
+            data = result["data"]
+            lines = [f"聚合结果（{len(data)} 行）："]
+            for row in data[:20]:
+                parts = [f"{k}={v}" for k, v in row.items()]
+                lines.append(f"  {', '.join(parts)}")
+            if len(data) > 20:
+                lines.append(f"  ...及其他 {len(data) - 20} 行")
+            return {"content": "\n".join(lines), "summary": f"agg {obj_type}: {len(data)} rows", "data": data}
 
         elif tool_name.startswith("fn_"):
             func_name = tool_name[3:]

@@ -20,7 +20,7 @@ from typing import Optional
 
 from ontology_engine.database import init_db, get_connection
 from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, ACTION_TYPES, FUNCTIONS, INTERFACES, OBJECT_SETS
-from ontology_engine.query import get_object, query_objects, traverse_link, query_objects_v2, query_object_set, fill_derived_batch
+from ontology_engine.query import get_object, query_objects, traverse_link, query_objects_v2, query_object_set, fill_derived_batch, aggregate_objects
 from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
 from ontology_engine.graph import get_graph, reload_graph
@@ -131,6 +131,33 @@ def api_traverse_link(object_type: str, object_id: int, link_name: str):
     """沿 Link 遍历获取关联对象"""
     results = traverse_link(object_type, object_id, link_name)
     return {"data": results, "count": len(results)}
+
+
+# ============================================================
+# Aggregation API
+# ============================================================
+
+class AggregateRequest(BaseModel):
+    aggregations: list[dict]
+    filters: Optional[dict] = None
+    group_by: Optional[list[str]] = None
+    order_by: Optional[str] = None
+    order_dir: str = "desc"
+    limit: int = 50
+
+
+@app.post("/ontology/objects/{object_type}/aggregate")
+def api_aggregate_objects(object_type: str, req: AggregateRequest):
+    """通用聚合查询：支持 count/sum/avg/min/max/count_distinct + 跨 Link 分组"""
+    return aggregate_objects(
+        object_type,
+        aggregations=req.aggregations,
+        filters=req.filters,
+        group_by=req.group_by,
+        order_by=req.order_by,
+        order_dir=req.order_dir,
+        limit=req.limit,
+    )
 
 
 # ============================================================

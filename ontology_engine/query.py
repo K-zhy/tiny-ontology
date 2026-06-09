@@ -560,6 +560,235 @@ def query_objects_v2(
     return results
 
 
+# ============================================================
+# Aggregation 引擎 — 通用聚合查询（GROUP BY + 聚合函数）
+# ============================================================
+
+# 支持的聚合函数
+_AGG_FUNC_MAP = {
+    "count": "COUNT(*)",
+    "count_distinct": "COUNT(DISTINCT {col})",
+    "sum": "SUM({col})",
+    "avg": "AVG({col})",
+    "min": "MIN({col})",
+    "max": "MAX({col})",
+}
+
+
+def aggregate_objects(
+    object_type: str,
+    aggregations: list[dict],
+    filters: Optional[dict] = None,
+    group_by: Optional[list[str]] = None,
+    order_by: Optional[str] = None,
+    order_dir: str = "desc",
+    limit: int = 50,
+) -> dict:
+    """通用聚合查询，支持跨 Link 的分组和过滤。
+
+    参数:
+        object_type: 基础对象类型（如 "Score"）
+        aggregations: 聚合定义列表，每项格式:
+            {"type": "avg", "field": "scoreValue", "name": "avg_score"}
+            type 可选: count, count_distinct, sum, avg, min, max
+            field: 属性名（支持跨Link点号如 "student.age"），count 不需要 field
+            name: 结果别名（可选，默认自动生成）
+        filters: 过滤条件（格式同 query_objects_v2，支持跨 Link 点号）
+        group_by: 分组字段列表，支持跨 Link 点号（如 ["student.name", "course.name"]）
+        order_by: 排序字段（引用 aggregation 的 name，或 group_by 字段）
+        order_dir: 排序方向 "asc" / "desc"
+        limit: 返回上限
+
+    返回:
+        {"success": True, "data": [...], "sql": "...(debug)"}
+    """
+    obj_def = OBJECT_TYPES.get(object_type)
+    if not obj_def:
+        return {"success": False, "error": f"Unknown object type: {object_type}"}
+
+    if not aggregations:
+        return {"success": False, "error": "aggregations 不能为空"}
+
+    # 共享 JOIN 状态
+    join_clauses: list[str] = []
+    join_cache: dict = {}
+    alias_counter = [1]
+    params: list = []
+
+    # --- 编译 aggregation SELECT 子句 ---
+    select_parts: list[str] = []
+    agg_aliases: list[str] = []  # 对应位置的别名
+    for i, agg in enumerate(aggregations):
+        agg_type = agg.get("type", "count").lower()
+        agg_field = agg.get("field")
+        agg_name = agg.get("name", f"{agg_type}_{i}")
+        agg_aliases.append(agg_name)
+
+        if agg_type not in _AGG_FUNC_MAP:
+            return {"success": False, "error": f"不支持的聚合类型: {agg_type}，可用: {list(_AGG_FUNC_MAP.keys())}"}
+
+        if agg_type == "count" and not agg_field:
+            select_parts.append(f"COUNT(*) AS {agg_name}")
+        else:
+            if not agg_field:
+                return {"success": False, "error": f"聚合类型 '{agg_type}' 需要指定 field"}
+            col_ref = _resolve_field_ref(
+                object_type, agg_field, join_clauses, join_cache, alias_counter
+            )
+            template = _AGG_FUNC_MAP[agg_type]
+            select_parts.append(f"{template.format(col=col_ref)} AS {agg_name}")
+
+    # --- 编译 GROUP BY 子句 ---
+    group_refs: list[str] = []
+    group_select_parts: list[str] = []
+    if group_by:
+        for g_field in group_by:
+            col_ref = _resolve_field_ref(
+                object_type, g_field, join_clauses, join_cache, alias_counter
+            )
+            group_refs.append(col_ref)
+            # 用最后一段属性名作别名
+            alias = g_field.replace(".", "_")
+            group_select_parts.append(f"{col_ref} AS {alias}")
+
+    # --- 编译 WHERE 子句（过滤）---
+    where_clauses: list[str] = []
+    if filters:
+        filters = dict(filters)
+        direct_filters = {}
+        link_filters = {}
+        for key, value in filters.items():
+            if "." in key:
+                link_filters[key] = value
+            else:
+                direct_filters[key] = value
+
+        if link_filters:
+            _, link_where, link_params = _build_link_joins(
+                object_type, link_filters, False,
+                join_clauses, join_cache, alias_counter,
+            )
+            where_clauses.extend(link_where)
+            params.extend(link_params)
+
+        for key, value in direct_filters.items():
+            prop = next((p for p in obj_def.properties if p.name == key), None)
+            if not prop or not prop.column:
+                continue
+            col_ref = f"t0.{prop.column}"
+            where_clauses.append(_compile_condition(col_ref, value, params))
+
+    # --- 组装 SQL ---
+    all_select = group_select_parts + select_parts
+    sql_parts = [f"SELECT {', '.join(all_select)} FROM {obj_def.table} t0"]
+    sql_parts.extend(join_clauses)
+
+    if where_clauses:
+        sql_parts.append("WHERE " + " AND ".join(where_clauses))
+
+    if group_refs:
+        sql_parts.append("GROUP BY " + ", ".join(group_refs))
+
+    # ORDER BY
+    direction = "DESC" if order_dir.lower() == "desc" else "ASC"
+    if order_by:
+        # order_by 可以引用 agg 别名或 group_by 字段别名
+        sql_parts.append(f"ORDER BY {order_by} {direction}")
+    elif agg_aliases:
+        # 默认按第一个聚合结果排序
+        sql_parts.append(f"ORDER BY {agg_aliases[0]} {direction}")
+
+    sql_parts.append(f"LIMIT {limit}")
+
+    sql = "\n".join(sql_parts)
+
+    # --- 执行 ---
+    conn = get_connection()
+    try:
+        rows = conn.execute(sql, params).fetchall()
+    except Exception as e:
+        conn.close()
+        return {"success": False, "error": str(e), "sql": sql}
+    conn.close()
+
+    results = [dict(row) for row in rows]
+    return {"success": True, "data": results, "sql": sql}
+
+
+def _resolve_field_ref(
+    object_type: str,
+    field_path: str,
+    join_clauses: list,
+    join_cache: dict,
+    alias_counter: list,
+) -> str:
+    """将字段路径（如 "student.name" 或 "scoreValue"）解析为 SQL 列引用。
+
+    复用已有的 _build_link_joins / _find_link_by_segment 机制。
+    """
+    if "." in field_path:
+        parts = field_path.split(".")
+        prop_name = parts[-1]
+        path_segments = parts[:-1]
+
+        current_type = object_type
+        current_alias = "t0"
+
+        for segment in path_segments:
+            cache_key = (current_alias, segment)
+            if cache_key in join_cache:
+                current_alias = join_cache[cache_key]
+                link, _ = _find_link_by_segment(current_type, segment)
+                if link:
+                    current_type = (
+                        link.target_type
+                        if link.source_type == current_type
+                        else link.source_type
+                    )
+                continue
+
+            link, direction = _find_link_by_segment(current_type, segment)
+            if link is None:
+                raise ValueError(f"无法从 '{current_type}' 解析路径段 '{segment}'")
+
+            new_alias = f"l{alias_counter[0]}"
+            alias_counter[0] += 1
+
+            if direction == "forward":
+                target_table = OBJECT_TYPES[link.target_type].table
+                join_clauses.append(
+                    f"JOIN {target_table} {new_alias} "
+                    f"ON {current_alias}.{link.source_fk} = {new_alias}.id"
+                )
+                current_type = link.target_type
+            else:
+                source_table = OBJECT_TYPES[link.source_type].table
+                join_clauses.append(
+                    f"JOIN {source_table} {new_alias} "
+                    f"ON {current_alias}.id = {new_alias}.{link.source_fk}"
+                )
+                current_type = link.source_type
+
+            join_cache[cache_key] = new_alias
+            current_alias = new_alias
+
+        # 解析最终属性
+        target_obj_def = OBJECT_TYPES[current_type]
+        prop = next(
+            (p for p in target_obj_def.properties if p.name == prop_name), None
+        )
+        if not prop:
+            raise ValueError(f"属性 '{prop_name}' 在类型 '{current_type}' 中不存在")
+        return f"{current_alias}.{prop.column}"
+    else:
+        # 直接属性
+        obj_def = OBJECT_TYPES[object_type]
+        prop = next((p for p in obj_def.properties if p.name == field_path), None)
+        if not prop:
+            raise ValueError(f"属性 '{field_path}' 在类型 '{object_type}' 中不存在")
+        return f"t0.{prop.column}"
+
+
 def query_object_set(
     set_name: str,
     filters: Optional[dict] = None,
