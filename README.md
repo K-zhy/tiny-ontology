@@ -12,14 +12,23 @@
 # 1. 安装依赖
 pip install fastapi uvicorn httpx
 
-# 2. 初始化数据库并灌入种子数据
+# 2. 配置 LLM（项目根目录 .env）
+cat > .env <<'EOF'
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=请替换为你的实际 DashScope Key
+LLM_MODEL=qwen3.7-plus
+EOF
+
+# 3. 初始化数据库并灌入种子数据
 python seed_data.py
 
-# 3. 启动服务
+# 4. 启动服务
 python server.py
 ```
 
 访问 http://localhost:8000 查看前端图谱页面，http://localhost:8000/docs 查看 Swagger API 文档。
+
+自然语言查询默认读取项目根目录 `.env` 中的 `LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`。这些变量也支持通过系统环境变量覆盖。
 
 ## 架构概览
 

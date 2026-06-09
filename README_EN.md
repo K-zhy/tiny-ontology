@@ -12,14 +12,23 @@ A student grade management system demo built on **Palantir Ontology** design pri
 # 1. Install dependencies
 pip install fastapi uvicorn httpx
 
-# 2. Initialize database and load seed data
+# 2. Configure the LLM (.env in project root)
+cat > .env <<'EOF'
+LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_API_KEY=replace-with-your-dashscope-key
+LLM_MODEL=qwen3.7-plus
+EOF
+
+# 3. Initialize database and load seed data
 python seed_data.py
 
-# 3. Start the server
+# 4. Start the server
 python server.py
 ```
 
 Visit http://localhost:8000 for the frontend graph UI, http://localhost:8000/docs for Swagger API docs.
+
+Natural language query modules load `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` from the project-root `.env` file by default. OS environment variables still take precedence.
 
 ## Architecture
 

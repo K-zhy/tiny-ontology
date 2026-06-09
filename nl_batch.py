@@ -5,9 +5,7 @@ LLM 一次性输出完整 JSON 操作序列，引擎逐条执行。
 """
 
 from __future__ import annotations
-import httpx
 import json
-import os
 import re
 import copy
 
@@ -15,6 +13,7 @@ from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, ACTION_TYPES, FUN
 from ontology_engine.query import get_object, query_objects, traverse_link
 from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
+from llm_client import chat_completion_text
 
 
 def _truncate_text(text: str, max_len: int) -> str:
@@ -54,25 +53,7 @@ def format_final_answer(answer: str) -> str:
 
 async def call_llm_simple(system_prompt: str, user_content: str, max_tokens: int = 4096) -> str:
     """单轮无工具 LLM 调用，返回文本"""
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            os.environ.get("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic") + "/messages",
-            headers={
-                "x-api-key": os.environ.get("ANTHROPIC_AUTH_TOKEN", ""),
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-flash"),
-                "max_tokens": max_tokens,
-                "system": system_prompt,
-                "messages": [{"role": "user", "content": user_content}],
-                "thinking": {"type": "disabled"},
-            },
-        )
-        data = resp.json()
-        text_blocks = [b["text"] for b in data.get("content", []) if b.get("type") == "text"]
-        return text_blocks[0] if text_blocks else ""
+    return await chat_completion_text(system_prompt, user_content, max_tokens=max_tokens)
 
 
 # ---- Schema 上下文 ----

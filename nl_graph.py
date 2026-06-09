@@ -5,13 +5,12 @@ LLM 通过工具在内存实例图谱上逐步游走探索。
 """
 
 from __future__ import annotations
-import httpx
 import json
-import os
 import re
 
 from ontology_engine.registry import OBJECT_TYPES, FUNCTIONS, INTERFACES
 from ontology_engine.graph import get_graph, reload_graph
+from llm_client import chat_completion
 
 
 # ---- 中文容错映射 ----
@@ -65,30 +64,7 @@ def format_final_answer(answer: str) -> str:
 # ---- LLM 调用 ----
 
 async def call_llm(system: str, tools: list[dict], messages: list[dict]) -> dict:
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                os.environ.get("ANTHROPIC_BASE_URL", "https://api.deepseek.com/anthropic") + "/messages",
-                headers={
-                    "x-api-key": os.environ.get("ANTHROPIC_AUTH_TOKEN", ""),
-                    "anthropic-version": "2023-06-01",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": os.environ.get("ANTHROPIC_MODEL", "deepseek-v4-flash"),
-                    "max_tokens": 2048,
-                    "system": system,
-                    "tools": tools,
-                    "messages": messages,
-                    "thinking": {"type": "disabled"},
-                },
-            )
-            data = resp.json()
-            if resp.status_code >= 400:
-                return {"content": [{"type": "text", "text": f"API error {resp.status_code}: {data}"}], "stop_reason": "error"}
-            return data
-    except Exception as e:
-        return {"content": [{"type": "text", "text": str(e)}], "stop_reason": "error"}
+    return await chat_completion(system, messages, tool_schemas=tools, max_tokens=2048)
 
 
 # ---- System Prompt ----
