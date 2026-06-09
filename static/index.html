@@ -132,6 +132,7 @@ body {
 .info-sidebar::-webkit-scrollbar { width:4px; }
 .info-sidebar::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
 .info-pane { padding: 10px 14px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+#answer-pane { display: flex; flex-direction: column; min-height: 52px; overflow: hidden; }
 .info-pane:last-child { border-bottom: none; }
 .info-pane.pane-expand { flex: 1; min-height: 120px; display: flex; flex-direction: column; overflow: hidden; }
 .info-pane.pane-results { flex: 0 0 180px; min-height: 96px; overflow-y: auto; }
@@ -141,11 +142,14 @@ body {
   text-transform: uppercase; margin-bottom: 8px;
 }
 .answer-box {
+  flex: 1; min-height: 0; overflow-y: auto;
   font-size: 13px; line-height: 1.7; color: var(--ink);
   display: none; padding: 10px 12px;
   background: #faf5ee; border: 1px solid var(--border-lit);
   border-radius: var(--radius); border-left: 2px solid var(--accent);
 }
+.answer-box::-webkit-scrollbar { width:4px; }
+.answer-box::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
 .exploration-log { flex: 1; min-height: 0; overflow-y: auto; }
 .exploration-log::-webkit-scrollbar { width:4px; }
 .exploration-log::-webkit-scrollbar-thumb { background:var(--border-lit); border-radius:2px; }
@@ -319,7 +323,7 @@ body {
 .resize-handle:hover, .resize-handle.dragging { background: var(--accent); }
 .resize-handle:hover::after, .resize-handle.dragging::after { background: #fff; }
 
-.sidebar-resize-handle {
+.sidebar-split-handle {
   height: 5px; margin: 0 10px; border-radius: 2px;
 }
 /* vertical (graph | sidebar) */
@@ -493,10 +497,11 @@ body {
   <div class="resize-handle-v" id="resize-handle-v"></div>
 
   <aside class="info-sidebar">
-    <div class="info-pane">
+    <div class="info-pane" id="answer-pane">
       <div class="info-label">Answer</div>
       <div id="answerBox" class="answer-box"></div>
     </div>
+    <div class="resize-handle sidebar-split-handle" id="answer-exploration-resize-handle" title="Drag to resize answer"></div>
     <div class="info-pane pane-expand" id="explorationLog" style="display:none;">
       <div class="info-label" id="exploration-label" style="flex-shrink:0;">Exploration &mdash; <span id="exploration-mode-tag" style="color:var(--accent);">OAG</span></div>
       <!-- 可用工具面板 -->
@@ -510,7 +515,7 @@ body {
       <!-- 推断轨迹 -->
       <div class="exploration-log" id="explorationLogInner"></div>
     </div>
-    <div class="resize-handle sidebar-resize-handle" id="sidebar-resize-handle" title="Drag to resize results"></div>
+    <div class="resize-handle sidebar-split-handle" id="sidebar-resize-handle" title="Drag to resize results"></div>
     <div class="info-pane pane-results" id="results-pane">
       <div class="info-label">Results</div>
       <div id="results"><span class="muted">Awaiting query&hellip;</span></div>
@@ -792,6 +797,7 @@ async function nlQuery(){
   document.getElementById('answerBox').style.display='none';
   document.getElementById('explorationLog').style.display='none';
   document.getElementById('explorationLogInner').innerHTML='';
+  syncSidebarSplitHandles();
   var endpoints={'oag':'/ontology/nl-query-oag','graph':'/ontology/nl-query-graph','batch':'/ontology/nl-query'};
   var endpoint=endpoints[nlQueryMode]||endpoints.oag;
   try{
@@ -801,9 +807,9 @@ async function nlQuery(){
       var box=document.getElementById('answerBox');
       box.style.display='block';box.textContent=data.answer;
     }
+    renderResults(data);
     if(nlQueryMode==='oag'){renderOagExploration(data.exploration_log||[], data.available_tools||[]);}
     else if(nlQueryMode==='graph'){renderExplorationPath(data.exploration_path||[], data.available_tools||[]);}
-    else{renderResults(data);}
   }catch(e){
     document.getElementById('answerBox').style.display='block';
     document.getElementById('answerBox').textContent='Query failed: '+e.message;
@@ -820,10 +826,18 @@ function switchNlMode(mode){
   document.getElementById('explorationLog').style.display='none';
   document.getElementById('explorationLogInner').innerHTML='';
   document.getElementById('answerBox').style.display='none';
+  syncSidebarSplitHandles();
   var inp=document.getElementById('nlInput');
   if(mode==='oag'){inp.placeholder='张三高等数学多少分';}
   else if(mode==='graph'){inp.placeholder='查张三所有课程的平均分';}
   else{inp.placeholder='查张三的所有成绩';}
+}
+
+function syncSidebarSplitHandles(){
+  var answerHandle = document.getElementById('answer-exploration-resize-handle');
+  var explorationPane = document.getElementById('explorationLog');
+  if(!answerHandle || !explorationPane) return;
+  answerHandle.style.display = getComputedStyle(explorationPane).display === 'none' ? 'none' : 'block';
 }
 
 /* ---- 每轮工具清单 ---- */
@@ -859,6 +873,7 @@ function renderOagExploration(log, availableTools){
   var logPane=document.getElementById('explorationLog');
   var logEl=document.getElementById('explorationLogInner');
   logPane.style.display='flex';
+  syncSidebarSplitHandles();
   // 隐藏旧的全局工具面板
   var globalPanel=document.getElementById('tools-panel');
   if(globalPanel) globalPanel.style.display='none';
@@ -912,6 +927,7 @@ function renderExplorationPath(path, availableTools){
   var logPane=document.getElementById('explorationLog');
   var logEl=document.getElementById('explorationLogInner');
   logPane.style.display='flex';
+  syncSidebarSplitHandles();
   var globalPanel=document.getElementById('tools-panel');
   if(globalPanel) globalPanel.style.display='none';
   if(!path||!path.length){logEl.innerHTML='<span class="muted">No steps</span>';return;}
@@ -1017,23 +1033,52 @@ function animateExploration(path){
 function renderResults(data){
   var el=document.getElementById('results');var html='';
   if(!data.success&&data.error){el.innerHTML='<div class="error-msg">Query failed: '+data.error+'</div>';return;}
+  var derivedResults = deriveExplorationResults(data);
   if(data.operations&&data.operations.length>0){
     html+='<div style="font-size:10px;color:var(--ink-muted);margin-bottom:6px;">';
     html+=data.operations.map(function(o,i){return '<span style="background:var(--bg-base);padding:1px 5px;border-radius:2px;margin:0 2px;">'+(i+1)+'. '+o.op+'</span>';}).join(' &rarr; ');
     html+='</div>';
   }
-  if(data.results&&data.results.length>0){
-    data.results.forEach(function(r,i){
+  var resultEntries = data.results&&data.results.length>0 ? data.results : derivedResults;
+  if(resultEntries&&resultEntries.length>0){
+    resultEntries.forEach(function(r,i){
       if(r.error){html+='<div class="error-msg">Step '+(i+1)+': '+r.error+'</div>';return;}
-      if(r.data===null||r.data===undefined){html+='<div class="muted">Step '+(i+1)+': no result</div>';return;}
-      var stepLabel=data.results.length>1?'<span style="font-size:10px;color:var(--ink-muted);">Step '+(i+1)+':</span> ':'';
+      if(r.data===null||r.data===undefined){
+        if(r.content){
+          html+=renderResultText(r, i, resultEntries.length);
+          return;
+        }
+        html+='<div class="muted">Step '+(i+1)+': no result</div>';return;
+      }
+      var stepLabel=resultEntries.length>1?'<span style="font-size:10px;color:var(--ink-muted);">Step '+(i+1)+':</span> ':'';
       if(Array.isArray(r.data)&&r.data.length>0){html+=stepLabel+renderTable(r.data);}
       else if(Array.isArray(r.data)&&r.data.length===0){html+='<div class="muted">'+stepLabel+'no data</div>';}
       else if(typeof r.data==='object'&&r.data!==null){html+=stepLabel+renderTable([r.data]);}
       else if(typeof r.data==='string'||typeof r.data==='number'){html+='<div style="font-size:16px;font-weight:600;color:var(--sage);">'+stepLabel+r.data+'</div>';}
+      else if(r.content){html+=renderResultText(r, i, resultEntries.length);}
     });
   }
   el.innerHTML=html||'<span class="muted">Awaiting query&hellip;</span>';
+}
+
+function deriveExplorationResults(data){
+  var steps = (data.exploration_log||[]).concat(data.exploration_path||[]);
+  return steps.filter(function(step){
+    return step.result_data !== undefined || step.result_content;
+  }).map(function(step){
+    return {
+      data: step.result_data,
+      content: step.result_content,
+      error: step.result_error,
+      label: step.tool || step.tool_name || ''
+    };
+  });
+}
+
+function renderResultText(result, index, total){
+  var stepLabel = total>1 ? '<span style="font-size:10px;color:var(--ink-muted);">Step '+(index+1)+':</span> ' : '';
+  var title = result.label ? '<div style="font-size:10px;color:var(--ink-muted);margin-bottom:4px;">'+escHtml(result.label)+'</div>' : '';
+  return '<div style="margin-bottom:8px;">'+stepLabel+title+'<pre style="margin:0;white-space:pre-wrap;word-break:break-word;font-size:11px;line-height:1.5;color:var(--ink);background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius);padding:8px;">'+escHtml(result.content)+'</pre></div>';
 }
 
 function renderTable(items){
@@ -1184,11 +1229,60 @@ function toggleRawTable(id, header) {
 })();
 
 (function(){
+  var handle = document.getElementById('answer-exploration-resize-handle');
+  var sidebar = document.querySelector('.info-sidebar');
+  var answerPane = document.getElementById('answer-pane');
+  var explorationPane = document.getElementById('explorationLog');
+  var resultsPane = document.getElementById('results-pane');
+  var resultsHandle = document.getElementById('sidebar-resize-handle');
+  var isDragging = false, startY = 0, startH = 0;
+
+  function isVisible(el){
+    return !!el && getComputedStyle(el).display !== 'none';
+  }
+
+  handle.addEventListener('mousedown', function(e){
+    if(!isVisible(explorationPane)) return;
+    isDragging = true;
+    startY = e.clientY;
+    startH = answerPane.offsetHeight;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', function(e){
+    if(!isDragging) return;
+    var delta = e.clientY - startY;
+    var sidebarHeight = sidebar.clientHeight;
+    var resultsHeight = isVisible(resultsPane) ? resultsPane.offsetHeight : 0;
+    var resultsHandleHeight = isVisible(resultsHandle) ? resultsHandle.offsetHeight : 0;
+    var minAnswer = 52;
+    var minExploration = 120;
+    var maxH = Math.max(minAnswer, sidebarHeight - resultsHeight - resultsHandleHeight - handle.offsetHeight - minExploration);
+    var newH = Math.max(minAnswer, Math.min(maxH, startH + delta));
+    answerPane.style.flex = '0 0 ' + newH + 'px';
+    answerPane.style.height = newH + 'px';
+  });
+
+  document.addEventListener('mouseup', function(){
+    if(isDragging){
+      isDragging = false;
+      handle.classList.remove('dragging');
+      document.body.style.cursor='';
+      document.body.style.userSelect='';
+    }
+  });
+})();
+
+(function(){
   var handle = document.getElementById('sidebar-resize-handle');
   var sidebar = document.querySelector('.info-sidebar');
   var resultsPane = document.getElementById('results-pane');
   var explorationPane = document.getElementById('explorationLog');
-  var answerPane = document.querySelector('.info-sidebar .info-pane:not(.pane-expand):not(.pane-results)');
+  var answerPane = document.getElementById('answer-pane');
+  var answerHandle = document.getElementById('answer-exploration-resize-handle');
   var isDragging = false, startY = 0, startH = 0;
 
   function isVisible(el){
@@ -1210,9 +1304,10 @@ function toggleRawTable(id, header) {
     var delta = startY - e.clientY;
     var sidebarHeight = sidebar.clientHeight;
     var answerHeight = isVisible(answerPane) ? answerPane.offsetHeight : 0;
+    var answerHandleHeight = isVisible(answerHandle) ? answerHandle.offsetHeight : 0;
     var minBottom = 96;
     var minTop = isVisible(explorationPane) ? 120 : 0;
-    var maxH = Math.max(minBottom, sidebarHeight - answerHeight - handle.offsetHeight - minTop);
+    var maxH = Math.max(minBottom, sidebarHeight - answerHeight - answerHandleHeight - handle.offsetHeight - minTop);
     var newH = Math.max(minBottom, Math.min(maxH, startH + delta));
     resultsPane.style.flex = '0 0 ' + newH + 'px';
     resultsPane.style.height = newH + 'px';
@@ -1227,6 +1322,8 @@ function toggleRawTable(id, header) {
     }
   });
 })();
+
+syncSidebarSplitHandles();
 
 loadGraph();
 </script>

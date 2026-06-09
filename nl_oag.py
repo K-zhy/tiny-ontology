@@ -33,6 +33,73 @@ PROP_ALIASES = {
     "分数值": "scoreValue", "成绩": "scoreValue",
     "考试日期": "examDate",
 }
+VALUE_ALIASES = {
+    "gender": {
+        "男": "M", "男性": "M", "male": "M", "m": "M",
+        "女": "F", "女性": "F", "female": "F", "f": "F",
+    }
+}
+
+
+def normalize_filter_value(prop_name: str, value):
+    if isinstance(value, str):
+        alias_map = VALUE_ALIASES.get(prop_name)
+        if alias_map:
+            return alias_map.get(value.lower(), alias_map.get(value, value))
+        return value
+    if isinstance(value, list):
+        return [normalize_filter_value(prop_name, item) for item in value]
+    if isinstance(value, dict):
+        normalized = {}
+        for key, item in value.items():
+            normalized[key] = normalize_filter_value(prop_name, item) if key == "value" else item
+        return normalized
+    return value
+
+
+def normalize_filters(filters: dict) -> dict:
+    normalized = {}
+    for key, value in filters.items():
+        mapped_key = PROP_ALIASES.get(key, key)
+        if mapped_key == "$or" and isinstance(value, list):
+            normalized[mapped_key] = [normalize_filters(item) if isinstance(item, dict) else item for item in value]
+            continue
+        prop_name = mapped_key.split(".")[-1]
+        normalized[mapped_key] = normalize_filter_value(prop_name, value)
+    return normalized
+
+
+def _truncate_text(text: str, max_len: int) -> str:
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + '…'
+
+
+def format_final_answer(answer: str) -> str:
+    text = (answer or '').strip()
+    if not text:
+        return '结论：未找到相关信息。\n分析：未获得足够数据。'
+
+    if '结论：' in text and '分析：' in text:
+        conclusion, analysis = text.split('分析：', 1)
+        conclusion = conclusion.split('结论：', 1)[-1].strip()
+        analysis = analysis.strip()
+        return f'结论：{_truncate_text(conclusion, 90)}\n分析：{_truncate_text(analysis, 120)}'
+
+    fragments = [frag.strip(' -•*\t') for frag in re.split(r'\n+|(?<=[。！？])\s*', text) if frag.strip()]
+    if not fragments:
+        return '结论：未找到相关信息。\n分析：未获得足够数据。'
+
+    conclusion = fragments[0]
+    analysis_start = 1
+    if conclusion.endswith(('：', ':')) and len(fragments) > 1:
+        conclusion = conclusion + fragments[1]
+        analysis_start = 2
+
+    analysis_parts = fragments[analysis_start:analysis_start + 2]
+    analysis = '；'.join(part.rstrip('。') for part in analysis_parts if part) if analysis_parts else '依据当前查询结果给出判断。'
+    return f'结论：{_truncate_text(conclusion, 90)}\n分析：{_truncate_text(analysis, 120)}'
 
 
 # ---- LLM 调用 ----
@@ -287,6 +354,14 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 8. **对象绑定函数通过 `fn_{{funcName}}` 工具直接调用**（如 fn_getAvgScore、fn_getPassRate），无需经过 call_function 包装。需要先用 query_objects 拿到对象 id，再传给函数。
 9. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
 10. **再次强调：Score 结果已经包含 studentName、courseName、teacherName，你不需要再单独查 Student 或 Course 表！**
+11. **Student.gender 在底层数据中使用 `M`/`F` 编码；当用户说“男/女”时，你应分别按 `M`/`F` 过滤。**
+
+## 输出要求
+- 严格按以下格式输出：第一行 `结论：...`，第二行 `分析：...`
+- 必须先给结论，再给简要分析过程
+- `结论` 只写最终答案，不铺垫，不解释工具调用
+- `分析` 只保留最关键的 1 到 2 个依据，简短说明即可
+- 如果结果并列，直接在 `结论` 中点名并列对象；如果没找到，直接写没找到
 
 ## Schema
 
@@ -311,6 +386,7 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 - "张三或李四的成绩" → query_objects(type="Score", filters={{"student.name": {{"op":"in","value":["张三","李四"]}}}})
 - "还没有老师的课程" → query_objects(type="Course", filters={{"teacherId": {{"op":"is_null"}}}})
 - "按课程名排序所有成绩" → query_objects(type="Score", order_by="course.name")
+- "有哪些女学生" → query_objects(type="Student", filters={{"gender": "F"}})
 
 ## 规则
 - **Score 结果已经包含 studentName、courseName、teacherName，不要再单独查 Student/Course！**
@@ -399,13 +475,13 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
                 types_info.append({"type": type_name, "display": obj_def.display_name, "properties": props, "links": out_links + in_links, "functions": bound_funcs})
             set_info = [{"name": s.api_name, "display": s.display_name, "type": s.object_type, "description": s.description} for s in OBJECT_SETS.values()]
             content = json.dumps({"object_types": types_info, "object_sets": set_info}, ensure_ascii=False)
-            return {"content": content, "summary": f"listed {len(types_info)} types, {len(set_info)} sets"}
+            return {"content": content, "summary": f"listed {len(types_info)} types, {len(set_info)} sets", "data": {"object_types": types_info, "object_sets": set_info}}
 
         elif tool_name == "query_objects":
             obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
             filters = inp.get("filters", {})
             if filters:
-                filters = {PROP_ALIASES.get(k, k): v for k, v in filters.items()}
+                filters = normalize_filters(filters)
             fuzzy = inp.get("fuzzy", False)
             limit = min(inp.get("limit", 20), 100)
             order_by = inp.get("order_by")
@@ -413,7 +489,7 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
 
             results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy, limit=limit, order_by=order_by, order_dir=order_dir)
             if not results:
-                return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}"}
+                return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}", "data": []}
             enrich_score_context(results)
 
             lines = [f"找到 {len(results)} 个 {obj_type} 对象："]
@@ -428,18 +504,18 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
                 lines.append(f"  {obj_type}#{obj.get('id', '?')} '{label}': {', '.join(parts[:8])}")
             if len(results) > 15:
                 lines.append(f"  ...及其他 {len(results) - 15} 个结果")
-            return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}"}
+            return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}", "data": results}
 
         elif tool_name == "query_object_set":
             set_name = inp.get("set_name", "")
             filters = inp.get("filters", {})
             if filters:
-                filters = {PROP_ALIASES.get(k, k): v for k, v in filters.items()}
+                filters = normalize_filters(filters)
             limit = min(inp.get("limit", 20), 100)
 
             result = query_object_set(set_name, filters=filters, limit=limit)
             if not result.get("success"):
-                return {"content": f"ObjectSet 错误: {result.get('error')}", "summary": "error"}
+                return {"content": f"ObjectSet 错误: {result.get('error')}", "summary": "error", "error": result.get('error')}
             results = result["data"]
             set_def = OBJECT_SETS.get(set_name)
             obj_type = set_def.object_type if set_def else "unknown"
@@ -453,20 +529,20 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
                     parts.append(f"{k}={v}")
                 label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
                 lines.append(f"  {label}: {', '.join(parts[:8])}")
-            return {"content": "\n".join(lines), "summary": f"set {set_name}: {len(results)} results"}
+            return {"content": "\n".join(lines), "summary": f"set {set_name}: {len(results)} results", "data": results}
 
         elif tool_name == "get_object_detail":
             obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
             obj_id = inp.get("object_id", 0)
             obj = get_object(obj_type, obj_id)
             if obj is None:
-                return {"content": f"{obj_type} id={obj_id} 不存在", "summary": "not found"}
+                return {"content": f"{obj_type} id={obj_id} 不存在", "summary": "not found", "error": "not found"}
             fill_derived_batch([obj], obj_type)
             lines = [f"{obj_type}#{obj_id} '{obj.get('name', '')}'"]
             for k, v in obj.items():
                 if not k.startswith("_"):
                     lines.append(f"  {k}: {v}")
-            return {"content": "\n".join(lines), "summary": f"detail {obj_type}#{obj_id}"}
+            return {"content": "\n".join(lines), "summary": f"detail {obj_type}#{obj_id}", "data": obj}
 
         elif tool_name == "execute_action":
             action_name = inp.get("action_name", "")
@@ -474,12 +550,12 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
             result = execute_action(action_name, params)
             if result.get("success"):
                 reload_graph()
-            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"executed {action_name}"}
+            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"executed {action_name}", "data": result, "error": result.get("error")}
 
         elif tool_name.startswith("fn_"):
             func_name = tool_name[3:]
             result = call_function(func_name, inp)
-            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"fn:{func_name} → {result.get('data', result.get('error', '?'))}"}
+            return {"content": json.dumps(result, ensure_ascii=False), "summary": f"fn:{func_name} → {result.get('data', result.get('error', '?'))}", "data": result.get("data", result), "error": result.get("error")}
 
         return {"content": f"未知工具: {tool_name}", "summary": "unknown tool"}
     except Exception as e:
@@ -518,7 +594,15 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
                 tool_input = tool.get("input", {})
                 tool_id = tool.get("id", "")
                 tool_result = execute_tool(tool_name, tool_input)
-                entry = {"step": iteration + 1, "tool": tool_name, "input": tool_input, "summary": tool_result["summary"]}
+                entry = {
+                    "step": iteration + 1,
+                    "tool": tool_name,
+                    "input": tool_input,
+                    "summary": tool_result["summary"],
+                    "result_data": tool_result.get("data"),
+                    "result_content": tool_result.get("content"),
+                    "result_error": tool_result.get("error"),
+                }
                 if first:
                     if reasoning:
                         entry["reasoning"] = reasoning
@@ -528,7 +612,7 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
                 tool_results_content.append({"type": "tool_result", "tool_use_id": tool_id, "content": tool_result["content"]})
 
             if iteration + 1 >= 2 and tool_results_content:
-                tool_results_content[-1]["content"] += "\n\n[数据应该足够了。请直接用中文简短回答用户问题，不要再调工具。]"
+                tool_results_content[-1]["content"] += "\n\n[数据应该足够了。请严格按两行格式回答：第一行 `结论：...`，第二行 `分析：...`。必须先给结论，再简要分析，不要复述过程，不要再调工具。]"
 
             messages.append({"role": "user", "content": tool_results_content})
             continue
@@ -544,5 +628,7 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
 
     if final_answer is None:
         final_answer = "未找到相关信息"
+
+    final_answer = format_final_answer(final_answer)
 
     return {"success": True, "answer": final_answer, "exploration_log": exploration_log, "available_tools": available_tools}

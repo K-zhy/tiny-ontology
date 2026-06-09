@@ -17,6 +17,39 @@ from ontology_engine.action import execute_action
 from ontology_engine.functions import call_function, compute_derived_property
 
 
+def _truncate_text(text: str, max_len: int) -> str:
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 1].rstrip() + '…'
+
+
+def format_final_answer(answer: str) -> str:
+    text = (answer or '').strip()
+    if not text:
+        return '结论：未找到相关信息。\n分析：未获得足够数据。'
+
+    if '结论：' in text and '分析：' in text:
+        conclusion, analysis = text.split('分析：', 1)
+        conclusion = conclusion.split('结论：', 1)[-1].strip()
+        analysis = analysis.strip()
+        return f'结论：{_truncate_text(conclusion, 90)}\n分析：{_truncate_text(analysis, 120)}'
+
+    fragments = [frag.strip(' -•*\t') for frag in re.split(r'\n+|(?<=[。！？])\s*', text) if frag.strip()]
+    if not fragments:
+        return '结论：未找到相关信息。\n分析：未获得足够数据。'
+
+    conclusion = fragments[0]
+    analysis_start = 1
+    if conclusion.endswith(('：', ':')) and len(fragments) > 1:
+        conclusion = conclusion + fragments[1]
+        analysis_start = 2
+
+    analysis_parts = fragments[analysis_start:analysis_start + 2]
+    analysis = '；'.join(part.rstrip('。') for part in analysis_parts if part) if analysis_parts else '依据当前查询结果给出判断。'
+    return f'结论：{_truncate_text(conclusion, 90)}\n分析：{_truncate_text(analysis, 120)}'
+
+
 # ---- LLM 调用 ----
 
 async def call_llm_simple(system_prompt: str, user_content: str, max_tokens: int = 4096) -> str:
@@ -206,9 +239,10 @@ async def handle_batch_query(query_text: str) -> dict:
         # 生成自然语言回答
         answer_text = await call_llm_simple(
             "",
-            f"用户问题：{query_text}\n\n查询结果：{json.dumps(results, ensure_ascii=False)}\n\n请用简洁的中文回答用户问题，直接给出答案即可。",
-            max_tokens=300,
+            f"用户问题：{query_text}\n\n查询结果：{json.dumps(results, ensure_ascii=False)}\n\n请严格按两行格式回答：第一行 `结论：...`，第二行 `分析：...`。必须先给结论，再简要分析过程。不要复述查询过程，不要说“根据结果”或“查询显示”。",
+            max_tokens=120,
         )
+        answer_text = format_final_answer(answer_text)
         return {"success": True, "operations": ops, "results": results, "answer": answer_text}
     except Exception as e:
         return {"success": False, "error": str(e), "operations": [], "results": []}
