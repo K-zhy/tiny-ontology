@@ -117,17 +117,17 @@ def api_query_objects(
 
 
 @app.get("/ontology/objects/{object_type}/{object_id}")
-def api_get_object(object_type: str, object_id: int):
+def api_get_object(object_type: str, object_id: str):
     """获取单个对象（含派生属性）"""
     obj = get_object(object_type, object_id)
     if obj is None:
-        raise HTTPException(404, f"{object_type} id={object_id} not found")
+        raise HTTPException(404, f"{object_type} object_id={object_id} not found")
     _fill_derived(object_type, obj)
     return obj
 
 
 @app.get("/ontology/objects/{object_type}/{object_id}/links/{link_name}")
-def api_traverse_link(object_type: str, object_id: int, link_name: str):
+def api_traverse_link(object_type: str, object_id: str, link_name: str):
     """沿 Link 遍历获取关联对象"""
     results = traverse_link(object_type, object_id, link_name)
     return {"data": results, "count": len(results)}
@@ -227,7 +227,7 @@ def api_query_object_set(set_name: str, limit: int = Query(50)):
 def api_list_tables():
     """返回所有原始数据表的结构和数据（用于前端展示底层 SQL 数据）"""
     tables = {}
-    for table_name in ["student", "teacher", "course", "score", "audit_log"]:
+    for table_name in ["student", "teacher", "course", "tc", "score", "audit_log"]:
         conn = get_connection()
         # 获取列信息
         cols = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
@@ -282,35 +282,63 @@ def api_graph_data():
     edges = []
 
     for obj_name, obj_def in OBJECT_TYPES.items():
+        pk_prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
+        if not pk_prop:
+            continue
         # 获取所有对象
         conn = __import__("ontology_engine.database", fromlist=["get_connection"]).get_connection()
         rows = conn.execute(f"SELECT * FROM {obj_def.table}").fetchall()
         conn.close()
 
         for row in rows:
+            object_id = row[pk_prop.column]
+            label_name = row["name"] if "name" in row.keys() else f"{obj_name}#{object_id}"
+            title_lines = [
+                f"<b>{obj_def.display_name} ({obj_name})</b>",
+                f"{pk_prop.name}: {object_id}",
+            ]
+            for prop in obj_def.properties:
+                if prop.prop_type == "derived":
+                    continue
+                if prop.column in row.keys() and prop.name != pk_prop.name:
+                    title_lines.append(f"{prop.name}: {row[prop.column]}")
             nodes.append({
-                "id": f"{obj_name}-{row['id']}",
+                "id": f"{obj_name}-{object_id}",
                 "objectType": obj_name,
-                "objectId": row["id"],
-                "label": row["name"] if "name" in row.keys() else f"{obj_name}#{row['id']}",
+                "objectId": object_id,
+                "label": f"{label_name}\n{object_id}",
+                "title": "<br>".join(title_lines),
                 "group": obj_name,
             })
 
     for link_def in LINK_TYPES.values():
         source_def = OBJECT_TYPES[link_def.source_type]
+        source_pk = link_def.source_pk or next(
+            p.column for p in source_def.properties if p.prop_type == "primary_key"
+        )
         conn = __import__("ontology_engine.database", fromlist=["get_connection"]).get_connection()
-        rows = conn.execute(f"SELECT id, {link_def.source_fk} FROM {source_def.table}").fetchall()
+        if link_def.cardinality == "many_to_many":
+            rows = conn.execute(
+                f"SELECT {link_def.bridge_source_fk}, {link_def.bridge_target_fk} FROM {link_def.bridge_table}"
+            ).fetchall()
+        else:
+            rows = conn.execute(f"SELECT {source_pk}, {link_def.source_fk} FROM {source_def.table}").fetchall()
         conn.close()
 
         for row in rows:
-            source_id = row["id"]
-            target_id = row[link_def.source_fk]
+            if link_def.cardinality == "many_to_many":
+                source_id = row[link_def.bridge_source_fk]
+                target_id = row[link_def.bridge_target_fk]
+            else:
+                source_id = row[source_pk]
+                target_id = row[link_def.source_fk]
             if target_id:
                 edges.append({
                     "from": f"{link_def.source_type}-{source_id}",
                     "to": f"{link_def.target_type}-{target_id}",
                     "label": link_def.api_name,
                     "displayLabel": link_def.display_name,
+                    "title": f"{link_def.display_name} ({link_def.cardinality})",
                 })
 
     return {"nodes": nodes, "edges": edges}
@@ -324,16 +352,18 @@ def api_schema_graph():
 
     # 每个 Object Type 是一个节点
     for name, obj_def in OBJECT_TYPES.items():
-        props_summary = ", ".join(
-            f"{p.name}({p.data_type})" for p in obj_def.properties[:4]
+        props_summary = "<br>".join(
+            f"{p.name} [{p.prop_type}] ({p.data_type})" for p in obj_def.properties
         )
+        pk_prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
         nodes.append({
             "id": f"Type-{name}",
             "label": f"{obj_def.display_name}\n{name}",
             "group": name,
             "title": f"<b>{obj_def.display_name} ({name})</b><br>"
                      f"表: {obj_def.table}<br>"
-                     f"属性: {props_summary}",
+                     f"主键: {pk_prop.name if pk_prop else '-'}<br>"
+                     f"属性:<br>{props_summary}",
             "shape": "box",
             "size": 35,
             "font": {"size": 14, "color": "#333", "multi": True},
@@ -346,7 +376,17 @@ def api_schema_graph():
         edges.append({
             "from": f"Type-{link_def.source_type}",
             "to": f"Type-{link_def.target_type}",
-            "label": f"{link_def.display_name}\n({link_def.api_name})",
+            "label": f"{link_def.display_name}\n({link_def.api_name})\n[{link_def.cardinality}]",
+            "title": (
+                f"<b>{link_def.display_name} ({link_def.api_name})</b><br>"
+                f"{link_def.source_type} → {link_def.target_type}<br>"
+                f"关系: {link_def.cardinality}<br>"
+                + (
+                    f"桥表: {link_def.bridge_table} ({link_def.bridge_source_fk}, {link_def.bridge_target_fk})"
+                    if link_def.cardinality == "many_to_many" else
+                    f"外键: {link_def.source_type}.{link_def.source_fk} -> {link_def.target_type}.{link_def.target_pk or 'PK'}"
+                )
+            ),
             "arrows": "to",
             "font": {"size": 11, "color": "#555", "background": "white", "multi": True},
             "width": 2,
@@ -406,11 +446,12 @@ def api_interfaces():
 
 def _fill_derived(object_type: str, obj: dict):
     """为对象填充派生属性"""
-    obj_id = obj.get("id")
-    if obj_id is None:
-        return
     obj_def = OBJECT_TYPES.get(object_type)
     if not obj_def:
+        return
+    pk_prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
+    obj_id = obj.get(pk_prop.name) if pk_prop else None
+    if obj_id is None:
         return
     for p in obj_def.properties:
         if p.prop_type == "derived":

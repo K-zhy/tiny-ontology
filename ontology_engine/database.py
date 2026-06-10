@@ -14,41 +14,56 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_db():
-    """建表 + 审计日志表"""
+    """仅确保表存在，不删除已有数据。"""
     conn = get_connection()
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS student (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER UNIQUE,
+            Sno TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             age INTEGER,
             gender TEXT,
-            class_name TEXT
+            class_name TEXT,
+            Sbirthday TEXT
         );
 
         CREATE TABLE IF NOT EXISTS teacher (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER UNIQUE,
+            Tno TEXT PRIMARY KEY,
             name TEXT NOT NULL,
             subject TEXT,
-            department TEXT
+            department TEXT,
+            Tsex TEXT,
+            Prof TEXT,
+            Tyear INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS course (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER UNIQUE,
+            Cno TEXT PRIMARY KEY,
             name TEXT NOT NULL,
-            teacher_id INTEGER,
-            credit INTEGER,
+            credit INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS tc (
+            id INTEGER UNIQUE,
+            Cno TEXT NOT NULL,
+            Tno TEXT NOT NULL,
             semester TEXT,
-            FOREIGN KEY (teacher_id) REFERENCES teacher(id)
+            PRIMARY KEY (Cno, Tno),
+            FOREIGN KEY (Cno) REFERENCES course(Cno),
+            FOREIGN KEY (Tno) REFERENCES teacher(Tno)
         );
 
         CREATE TABLE IF NOT EXISTS score (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            student_id INTEGER NOT NULL,
-            course_id INTEGER NOT NULL,
+            id INTEGER UNIQUE,
+            Sno TEXT NOT NULL,
+            Cno TEXT NOT NULL,
             score_value REAL,
             exam_date TEXT,
-            FOREIGN KEY (student_id) REFERENCES student(id),
-            FOREIGN KEY (course_id) REFERENCES course(id)
+            PRIMARY KEY (Sno, Cno),
+            FOREIGN KEY (Sno) REFERENCES student(Sno),
+            FOREIGN KEY (Cno) REFERENCES course(Cno)
         );
 
         CREATE TABLE IF NOT EXISTS audit_log (
@@ -62,3 +77,19 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+
+
+def reset_db():
+    """重建所有表，用于 seed 或显式重置环境。"""
+    conn = get_connection()
+    conn.executescript("""
+        DROP TABLE IF EXISTS tc;
+        DROP TABLE IF EXISTS score;
+        DROP TABLE IF EXISTS course;
+        DROP TABLE IF EXISTS teacher;
+        DROP TABLE IF EXISTS student;
+        DROP TABLE IF EXISTS audit_log;
+    """)
+    conn.commit()
+    conn.close()
+    init_db()

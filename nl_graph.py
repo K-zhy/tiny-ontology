@@ -22,7 +22,7 @@ PROP_ALIASES = {
     "姓名": "name", "名称": "name", "名字": "name",
     "年龄": "age", "性别": "gender", "班级": "className",
     "科目": "subject", "院系": "department", "部门": "department",
-    "学分": "credit", "学期": "semester",
+    "学分": "credit",
     "分数值": "scoreValue", "成绩": "scoreValue",
     "考试日期": "examDate",
 }

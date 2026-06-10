@@ -46,6 +46,9 @@ class OntologyGraph:
         try:
             # 1. 加载所有对象节点
             for type_name, obj_def in OBJECT_TYPES.items():
+                pk_prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
+                if not pk_prop:
+                    continue
                 regular_props = [(p.name, p.column) for p in obj_def.properties
                                  if p.prop_type != "derived" and p.column]
                 if not regular_props:
@@ -54,14 +57,15 @@ class OntologyGraph:
                 cols_str = ", ".join(col_names)
                 rows = conn.execute(f"SELECT {cols_str} FROM {obj_def.table}").fetchall()
                 for row in rows:
-                    node_key = f"{type_name}-{row['id']}"
+                    object_id = row[pk_prop.column]
+                    node_key = f"{type_name}-{object_id}"
                     # 用属性名（非列名）存储
                     props = {}
                     for prop_name, col_name in regular_props:
                         props[prop_name] = row[col_name]
                     # 统一加 name 显示名（Score 没有 name 列）
                     if "name" not in props:
-                        props["name"] = f"{obj_def.display_name}#{row['id']}"
+                        props["name"] = f"{obj_def.display_name}#{object_id}"
                     self._nodes[node_key] = props
                     self._node_types[node_key] = type_name
                     self._adj_out[node_key] = {}
@@ -69,11 +73,34 @@ class OntologyGraph:
             # 2. 构建邻接边
             for link_name, link_def in LINK_TYPES.items():
                 source_def = OBJECT_TYPES[link_def.source_type]
+                target_def = OBJECT_TYPES[link_def.target_type]
+                source_pk = link_def.source_pk or next(
+                    p.column for p in source_def.properties if p.prop_type == "primary_key"
+                )
+                target_pk = link_def.target_pk or next(
+                    p.column for p in target_def.properties if p.prop_type == "primary_key"
+                )
+
+                if link_def.cardinality == "many_to_many":
+                    rows = conn.execute(
+                        f"SELECT {link_def.bridge_source_fk}, {link_def.bridge_target_fk} FROM {link_def.bridge_table}"
+                    ).fetchall()
+                    for row in rows:
+                        source_key = f"{link_def.source_type}-{row[link_def.bridge_source_fk]}"
+                        target_key = f"{link_def.target_type}-{row[link_def.bridge_target_fk]}"
+                        if source_key not in self._nodes or target_key not in self._nodes:
+                            continue
+                        self._adj_out.setdefault(source_key, {}).setdefault(
+                            link_def.api_name, []).append(target_key)
+                        self._adj_out.setdefault(target_key, {}).setdefault(
+                            link_def.reverse_name, []).append(source_key)
+                    continue
+
                 rows = conn.execute(
-                    f"SELECT id, {link_def.source_fk} FROM {source_def.table}"
+                    f"SELECT {source_pk}, {link_def.source_fk} FROM {source_def.table}"
                 ).fetchall()
                 for row in rows:
-                    source_key = f"{link_def.source_type}-{row['id']}"
+                    source_key = f"{link_def.source_type}-{row[source_pk]}"
                     target_id = row[link_def.source_fk]
                     if target_id is None:
                         continue
@@ -299,7 +326,8 @@ class OntologyGraph:
         # 自动计算派生属性（avgScore, passRate 等）
         obj_def = OBJECT_TYPES.get(obj_type)
         if obj_def:
-            obj_id = props.get("id")
+            pk_prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
+            obj_id = props.get(pk_prop.name) if pk_prop else None
             if obj_id:
                 from ontology_engine.functions import compute_derived_property
                 for p in obj_def.properties:

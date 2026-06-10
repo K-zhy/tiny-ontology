@@ -22,11 +22,13 @@ OBJECT_TYPES: dict[str, ObjectTypeDef] = {
         display_name="学生",
         table="student",
         properties=[
-            PropertyDef(name="id", prop_type="primary_key", column="id", data_type="INTEGER"),
+            PropertyDef(name="Sno", prop_type="primary_key", column="Sno", data_type="TEXT"),
+            PropertyDef(name="id", prop_type="regular", column="id", data_type="INTEGER"),
             PropertyDef(name="name", prop_type="regular", column="name", data_type="TEXT"),
             PropertyDef(name="age", prop_type="regular", column="age", data_type="INTEGER"),
             PropertyDef(name="gender", prop_type="regular", column="gender", data_type="TEXT"),
             PropertyDef(name="className", prop_type="regular", column="class_name", data_type="TEXT"),
+            PropertyDef(name="Sbirthday", prop_type="regular", column="Sbirthday", data_type="TEXT"),
             PropertyDef(name="avgScore", prop_type="derived", column="", data_type="REAL"),
         ],
     ),
@@ -35,10 +37,14 @@ OBJECT_TYPES: dict[str, ObjectTypeDef] = {
         display_name="教师",
         table="teacher",
         properties=[
-            PropertyDef(name="id", prop_type="primary_key", column="id", data_type="INTEGER"),
+            PropertyDef(name="Tno", prop_type="primary_key", column="Tno", data_type="TEXT"),
+            PropertyDef(name="id", prop_type="regular", column="id", data_type="INTEGER"),
             PropertyDef(name="name", prop_type="regular", column="name", data_type="TEXT"),
             PropertyDef(name="subject", prop_type="regular", column="subject", data_type="TEXT"),
             PropertyDef(name="department", prop_type="regular", column="department", data_type="TEXT"),
+            PropertyDef(name="Tsex", prop_type="regular", column="Tsex", data_type="TEXT"),
+            PropertyDef(name="Prof", prop_type="regular", column="Prof", data_type="TEXT"),
+            PropertyDef(name="Tyear", prop_type="regular", column="Tyear", data_type="INTEGER"),
         ],
     ),
     "Course": ObjectTypeDef(
@@ -46,10 +52,10 @@ OBJECT_TYPES: dict[str, ObjectTypeDef] = {
         display_name="课程",
         table="course",
         properties=[
-            PropertyDef(name="id", prop_type="primary_key", column="id", data_type="INTEGER"),
+            PropertyDef(name="Cno", prop_type="primary_key", column="Cno", data_type="TEXT"),
+            PropertyDef(name="id", prop_type="regular", column="id", data_type="INTEGER"),
             PropertyDef(name="name", prop_type="regular", column="name", data_type="TEXT"),
             PropertyDef(name="credit", prop_type="regular", column="credit", data_type="INTEGER"),
-            PropertyDef(name="semester", prop_type="regular", column="semester", data_type="TEXT"),
             PropertyDef(name="passRate", prop_type="derived", column="", data_type="TEXT"),
         ],
     ),
@@ -76,8 +82,10 @@ LINK_TYPES: dict[str, LinkTypeDef] = {
         source_type="Score",
         target_type="Student",
         cardinality="many_to_one",
-        source_fk="student_id",
+        source_fk="Sno",
         reverse_name="scores",
+        source_pk="id",
+        target_pk="Sno",
     ),
     "forCourse": LinkTypeDef(
         api_name="forCourse",
@@ -85,17 +93,23 @@ LINK_TYPES: dict[str, LinkTypeDef] = {
         source_type="Score",
         target_type="Course",
         cardinality="many_to_one",
-        source_fk="course_id",
+        source_fk="Cno",
         reverse_name="scores",
+        source_pk="id",
+        target_pk="Cno",
     ),
     "taughtBy": LinkTypeDef(
         api_name="taughtBy",
         display_name="授课教师",
         source_type="Course",
         target_type="Teacher",
-        cardinality="many_to_one",
-        source_fk="teacher_id",
+        cardinality="many_to_many",
         reverse_name="courses",
+        source_pk="Cno",
+        target_pk="Tno",
+        bridge_table="tc",
+        bridge_source_fk="Cno",
+        bridge_target_fk="Tno",
     ),
 }
 
@@ -110,8 +124,8 @@ ACTION_TYPES: dict[str, ActionTypeDef] = {
         action_type="object",
         bound_object="Score",
         params=[
-            ParamDef(name="studentId", param_type="integer"),
-            ParamDef(name="courseId", param_type="integer"),
+            ParamDef(name="studentSno", param_type="string"),
+            ParamDef(name="courseCno", param_type="string"),
             ParamDef(name="scoreValue", param_type="float"),
             ParamDef(name="examDate", param_type="string"),
         ],
@@ -143,8 +157,9 @@ ACTION_TYPES: dict[str, ActionTypeDef] = {
         action_type="link",
         bound_object="Course",
         params=[
-            ParamDef(name="courseId", param_type="integer"),
-            ParamDef(name="teacherId", param_type="integer"),
+            ParamDef(name="courseCno", param_type="string"),
+            ParamDef(name="teacherTno", param_type="string"),
+            ParamDef(name="semester", param_type="string", required=False),
         ],
     ),
 }
@@ -160,9 +175,9 @@ FUNCTIONS: dict[str, FunctionDef] = {
         func_type="object",
         bound_object="Student",
         return_type="REAL",
-        params=[ParamDef(name="studentId", param_type="integer")],
+        params=[ParamDef(name="studentSno", param_type="string")],
         sql_template="""
-            SELECT ROUND(AVG(score_value), 1) FROM score WHERE student_id = ?
+            SELECT ROUND(AVG(score_value), 1) FROM score WHERE Sno = ?
         """,
         is_derived_property="avgScore",
     ),
@@ -172,9 +187,9 @@ FUNCTIONS: dict[str, FunctionDef] = {
         func_type="object",
         bound_object="Course",
         return_type="REAL",
-        params=[ParamDef(name="courseId", param_type="integer")],
+        params=[ParamDef(name="courseCno", param_type="string")],
         sql_template="""
-            SELECT ROUND(AVG(score_value), 1) FROM score WHERE course_id = ?
+            SELECT ROUND(AVG(score_value), 1) FROM score WHERE Cno = ?
         """,
     ),
     "getPassRate": FunctionDef(
@@ -183,12 +198,12 @@ FUNCTIONS: dict[str, FunctionDef] = {
         func_type="object",
         bound_object="Course",
         return_type="TEXT",
-        params=[ParamDef(name="courseId", param_type="integer")],
+        params=[ParamDef(name="courseCno", param_type="string")],
         sql_template="""
             SELECT ROUND(
                 COUNT(CASE WHEN score_value >= 60 THEN 1 END) * 100.0 / COUNT(*), 1
             ) || '%'
-            FROM score WHERE course_id = ?
+            FROM score WHERE Cno = ?
         """,
         is_derived_property="passRate",
     ),
@@ -200,12 +215,14 @@ FUNCTIONS: dict[str, FunctionDef] = {
         return_type="list",
         params=[],
         sql_template="""
-            SELECT c.id, c.name, c.semester, ROUND(AVG(sc.score_value), 1) as avg_score,
+            SELECT c.Cno, c.name, COALESCE(GROUP_CONCAT(DISTINCT tc.semester), '') as semester,
+                   ROUND(AVG(sc.score_value), 1) as avg_score,
                    COUNT(sc.id) as student_count
             FROM course c
-            LEFT JOIN score sc ON c.id = sc.course_id
-            GROUP BY c.id
-            ORDER BY c.id
+            LEFT JOIN score sc ON c.Cno = sc.Cno
+            LEFT JOIN tc ON c.Cno = tc.Cno
+            GROUP BY c.Cno
+            ORDER BY c.Cno
         """,
     ),
     "getTopStudents": FunctionDef(
@@ -215,14 +232,14 @@ FUNCTIONS: dict[str, FunctionDef] = {
         bound_object="Course",
         return_type="list",
         params=[
-            ParamDef(name="courseId", param_type="integer"),
+            ParamDef(name="courseCno", param_type="string"),
             ParamDef(name="limit", param_type="integer", required=False),
         ],
         sql_template="""
-            SELECT s.id, s.name, s.age, s.gender, s.class_name, sc.score_value
+            SELECT s.Sno, s.name, s.age, s.gender, s.class_name, s.Sbirthday, sc.score_value
             FROM score sc
-            JOIN student s ON sc.student_id = s.id
-            WHERE sc.course_id = ?
+            JOIN student s ON sc.Sno = s.Sno
+            WHERE sc.Cno = ?
             ORDER BY sc.score_value DESC
             LIMIT ?
         """,
@@ -234,8 +251,8 @@ FUNCTIONS: dict[str, FunctionDef] = {
         bound_object="Score",
         return_type="TEXT",
         params=[
-            ParamDef(name="studentId", param_type="integer"),
-            ParamDef(name="courseId", param_type="integer"),
+            ParamDef(name="studentSno", param_type="string"),
+            ParamDef(name="courseCno", param_type="string"),
             ParamDef(name="scoreValue", param_type="float"),
         ],
         sql_template="",
@@ -248,11 +265,11 @@ FUNCTIONS: dict[str, FunctionDef] = {
         return_type="list",
         params=[ParamDef(name="keyword", param_type="string", required=False)],
         sql_template="""
-            SELECT id, name, 'Student' as _type, 'Student' as result_type FROM student WHERE name LIKE '%' || ? || '%'
+            SELECT Sno as object_id, name, 'Student' as _type, 'Student' as result_type FROM student WHERE name LIKE '%' || ? || '%'
             UNION ALL
-            SELECT id, name, 'Teacher' as _type, 'Teacher' as result_type FROM teacher WHERE name LIKE '%' || ? || '%'
+            SELECT Tno as object_id, name, 'Teacher' as _type, 'Teacher' as result_type FROM teacher WHERE name LIKE '%' || ? || '%'
             UNION ALL
-            SELECT id, name, 'Course' as _type, 'Course' as result_type FROM course WHERE name LIKE '%' || ? || '%'
+            SELECT Cno as object_id, name, 'Course' as _type, 'Course' as result_type FROM course WHERE name LIKE '%' || ? || '%'
         """,
     ),
     "getScoreSummary": FunctionDef(
@@ -263,7 +280,7 @@ FUNCTIONS: dict[str, FunctionDef] = {
         return_type="TEXT",
         params=[
             ParamDef(name="objectType", param_type="string"),
-            ParamDef(name="objectId", param_type="integer"),
+            ParamDef(name="objectId", param_type="string"),
         ],
         sql_template="",
     ),
@@ -303,8 +320,8 @@ OBJECT_SETS: dict[str, ObjectSetDef] = {
         object_type="Student",
         description="平均分 >= 85 的优秀学生",
         sql="""
-            SELECT id FROM student
-            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE student_id = student.id) >= 85
+            SELECT Sno AS object_id FROM student
+            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE Sno = student.Sno) >= 85
         """,
     ),
     "PassedCourses": ObjectSetDef(
@@ -313,8 +330,8 @@ OBJECT_SETS: dict[str, ObjectSetDef] = {
         object_type="Course",
         description="课程平均分 >= 60 的及格课程",
         sql="""
-            SELECT id FROM course
-            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE course_id = course.id) >= 60
+            SELECT Cno AS object_id FROM course
+            WHERE (SELECT ROUND(AVG(score_value), 1) FROM score WHERE Cno = course.Cno) >= 60
         """,
     ),
 }

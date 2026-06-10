@@ -536,8 +536,8 @@ body {
   </div>
   <div class="tab-content" id="tab-actions">
     <div class="action-row">
-      <div class="field-group"><label>Student ID</label><input id="cs_student" placeholder="1"></div>
-      <div class="field-group"><label>Course ID</label><input id="cs_course" placeholder="1"></div>
+      <div class="field-group"><label>Student Sno</label><input id="cs_student" placeholder="3001"></div>
+      <div class="field-group"><label>Course Cno</label><input id="cs_course" placeholder="2001"></div>
       <div class="field-group"><label>Score</label><input id="cs_score" placeholder="95"></div>
       <div class="field-group"><label>Exam Date</label><input id="cs_date" placeholder="2024-06-15"></div>
       <button class="action-btn primary" onclick="doAction('createScore')">createScore</button>
@@ -548,8 +548,8 @@ body {
       <button class="action-btn primary" onclick="doAction('updateScore')">updateScore</button>
     </div>
     <div class="action-row">
-      <div class="field-group"><label>Course ID</label><input id="at_course" placeholder="1"></div>
-      <div class="field-group"><label>Teacher ID</label><input id="at_teacher" placeholder="1"></div>
+      <div class="field-group"><label>Course Cno</label><input id="at_course" placeholder="2005"></div>
+      <div class="field-group"><label>Teacher Tno</label><input id="at_teacher" placeholder="1004"></div>
       <button class="action-btn primary" onclick="doAction('assignTeacher')">assignTeacher</button>
       <div class="field-group"><label>Score ID</label><input id="ds_id" placeholder="1"></div>
       <button class="action-btn danger" onclick="doAction('deleteScore')">deleteScore</button>
@@ -1095,9 +1095,9 @@ function renderTable(items){
 // ======================== Actions ========================
 async function doAction(name){
   var params={};
-  if(name==='createScore'){params.studentId=parseInt(document.getElementById('cs_student').value);params.courseId=parseInt(document.getElementById('cs_course').value);params.scoreValue=parseFloat(document.getElementById('cs_score').value);params.examDate=document.getElementById('cs_date').value;}
+  if(name==='createScore'){params.studentSno=document.getElementById('cs_student').value.trim();params.courseCno=document.getElementById('cs_course').value.trim();params.scoreValue=parseFloat(document.getElementById('cs_score').value);params.examDate=document.getElementById('cs_date').value;}
   else if(name==='updateScore'){params.scoreId=parseInt(document.getElementById('us_id').value);params.scoreValue=parseFloat(document.getElementById('us_score').value);}
-  else if(name==='assignTeacher'){params.courseId=parseInt(document.getElementById('at_course').value);params.teacherId=parseInt(document.getElementById('at_teacher').value);}
+  else if(name==='assignTeacher'){params.courseCno=document.getElementById('at_course').value.trim();params.teacherTno=document.getElementById('at_teacher').value.trim();}
   else if(name==='deleteScore'){params.scoreId=parseInt(document.getElementById('ds_id').value);}
   try{
     var resp=await fetch('/ontology/actions/'+name,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({params:params})});
@@ -1137,8 +1137,9 @@ async function loadRawTables() {
     var data = await resp.json();
     if (!data.success) return;
     var tables = data.tables;
-    var tableOrder = ['student', 'teacher', 'course', 'score', 'audit_log'];
-    var fkCols = {score: ['student_id', 'course_id'], course: ['teacher_id']};
+    var tableOrder = ['student', 'teacher', 'course', 'tc', 'score', 'audit_log'];
+    var fkCols = {score: ['Sno', 'Cno'], tc: ['Cno', 'Tno']};
+    var pkCols = {student: ['Sno'], teacher: ['Tno'], course: ['Cno'], tc: ['Cno', 'Tno'], score: ['id'], audit_log: ['id']};
     var html = '';
     tableOrder.forEach(function(tblName) {
       var tbl = tables[tblName];
@@ -1152,7 +1153,7 @@ async function loadRawTables() {
         tableHtml += '<tr>';
         colNames.forEach(function(c) {
           var cls = '';
-          if (c === 'id') cls = 'col-pk';
+          if ((pkCols[tblName] || []).indexOf(c) >= 0) cls = 'col-pk';
           else if (fks.indexOf(c) >= 0) cls = 'col-fk';
           tableHtml += '<td class="' + cls + '">' + (row[c] ?? 'NULL') + '</td>';
         });

@@ -46,12 +46,12 @@ def call_function(func_name: str, params: Optional[dict] = None) -> dict:
             obj_id = params.get("objectId")
             if obj_type == "Student":
                 row = conn.execute(
-                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE student_id = ?",
+                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE Sno = ?",
                     (obj_id,)
                 ).fetchone()
             elif obj_type == "Course":
                 row = conn.execute(
-                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE course_id = ?",
+                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE Cno = ?",
                     (obj_id,)
                 ).fetchone()
             else:
@@ -87,8 +87,8 @@ def compute_derived_property(object_type: str, object_id: int, prop_name: str):
 def _run_validation(func_name: str, params: dict) -> dict:
     """校验 Function 的独立调用"""
     if func_name == "validateScore":
-        student_id = params.get("studentId")
-        course_id = params.get("courseId")
+        student_sno = params.get("studentSno")
+        course_cno = params.get("courseCno")
         score_value = params.get("scoreValue")
 
         errors = []
@@ -97,8 +97,8 @@ def _run_validation(func_name: str, params: dict) -> dict:
 
         conn = get_connection()
         row = conn.execute(
-            "SELECT id FROM score WHERE student_id = ? AND course_id = ?",
-            (student_id, course_id)
+            "SELECT id FROM score WHERE Sno = ? AND Cno = ?",
+            (student_sno, course_cno)
         ).fetchone()
         conn.close()
         if row:

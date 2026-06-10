@@ -72,15 +72,76 @@ def _compile_condition(col_ref: str, value, params: list) -> str:
     )
 
 
-def get_object(object_type: str, object_id: int) -> Optional[dict]:
+def _get_primary_property(obj_def):
+    prop = next((p for p in obj_def.properties if p.prop_type == "primary_key"), None)
+    if not prop:
+        raise ValueError(f"Object type '{obj_def.api_name}' 未定义主键属性")
+    return prop
+
+
+def _get_primary_column(obj_or_type) -> str:
+    obj_def = OBJECT_TYPES[obj_or_type] if isinstance(obj_or_type, str) else obj_or_type
+    return _get_primary_property(obj_def).column
+
+
+def _get_primary_name(obj_or_type) -> str:
+    obj_def = OBJECT_TYPES[obj_or_type] if isinstance(obj_or_type, str) else obj_or_type
+    return _get_primary_property(obj_def).name
+
+
+def _get_object_id_value(obj: dict, obj_def) -> Optional[str]:
+    return obj.get(_get_primary_name(obj_def))
+
+
+def _build_link_join_clause(link, direction: str, current_alias: str, new_alias: str,
+                            join_kind: str = "JOIN") -> tuple[str, str]:
+    source_def = OBJECT_TYPES[link.source_type]
+    target_def = OBJECT_TYPES[link.target_type]
+    source_pk = link.source_pk or _get_primary_column(source_def)
+    target_pk = link.target_pk or _get_primary_column(target_def)
+
+    if link.cardinality == "many_to_many":
+        bridge_alias = f"{new_alias}_bridge"
+        if direction == "forward":
+            clause = (
+                f"{join_kind} {link.bridge_table} {bridge_alias} "
+                f"ON {current_alias}.{source_pk} = {bridge_alias}.{link.bridge_source_fk} "
+                f"{join_kind} {target_def.table} {new_alias} "
+                f"ON {bridge_alias}.{link.bridge_target_fk} = {new_alias}.{target_pk}"
+            )
+            return clause, link.target_type
+        clause = (
+            f"{join_kind} {link.bridge_table} {bridge_alias} "
+            f"ON {current_alias}.{target_pk} = {bridge_alias}.{link.bridge_target_fk} "
+            f"{join_kind} {source_def.table} {new_alias} "
+            f"ON {bridge_alias}.{link.bridge_source_fk} = {new_alias}.{source_pk}"
+        )
+        return clause, link.source_type
+
+    if direction == "forward":
+        clause = (
+            f"{join_kind} {target_def.table} {new_alias} "
+            f"ON {current_alias}.{link.source_fk} = {new_alias}.{target_pk}"
+        )
+        return clause, link.target_type
+
+    clause = (
+        f"{join_kind} {source_def.table} {new_alias} "
+        f"ON {current_alias}.{target_pk} = {new_alias}.{link.source_fk}"
+    )
+    return clause, link.source_type
+
+
+def get_object(object_type: str, object_id) -> Optional[dict]:
     """获取单个对象（含派生属性）"""
     obj_def = OBJECT_TYPES[object_type]
+    pk_col = _get_primary_column(obj_def)
     regular_cols = [p.column for p in obj_def.properties if p.prop_type in ("primary_key", "regular")]
     cols_str = ", ".join(regular_cols)
 
     conn = get_connection()
     row = conn.execute(
-        f"SELECT {cols_str} FROM {obj_def.table} WHERE id = ?",
+        f"SELECT {cols_str} FROM {obj_def.table} WHERE {pk_col} = ?",
         (object_id,)
     ).fetchone()
     conn.close()
@@ -155,16 +216,25 @@ def traverse_link(object_type: str, object_id: int, link_name: str) -> list[dict
     if link and link.source_type == object_type:
         source_def = OBJECT_TYPES[link.source_type]
         target_def = OBJECT_TYPES[link.target_type]
+        source_pk = link.source_pk or _get_primary_column(source_def)
         target_cols = [p.column for p in target_def.properties
                        if p.prop_type in ("primary_key", "regular")]
         cols_str = ", ".join(f"t.{c}" for c in target_cols)
 
-        sql = f"""
-            SELECT {cols_str}
-            FROM {target_def.table} t
-            JOIN {source_def.table} s ON s.{link.source_fk} = t.id
-            WHERE s.id = ?
-        """
+        if link.cardinality == "many_to_many":
+            sql = f"""
+                SELECT {cols_str}
+                FROM {target_def.table} t
+                JOIN {link.bridge_table} b ON b.{link.bridge_target_fk} = t.{link.target_pk or _get_primary_column(target_def)}
+                WHERE b.{link.bridge_source_fk} = ?
+            """
+        else:
+            sql = f"""
+                SELECT {cols_str}
+                FROM {target_def.table} t
+                JOIN {source_def.table} s ON s.{link.source_fk} = t.{link.target_pk or _get_primary_column(target_def)}
+                WHERE s.{source_pk} = ?
+            """
         conn = get_connection()
         rows = conn.execute(sql, (object_id,)).fetchall()
         conn.close()
@@ -176,15 +246,25 @@ def traverse_link(object_type: str, object_id: int, link_name: str) -> list[dict
                      if l.target_type == object_type and l.reverse_name == link_name), None)
     if rev_link:
         source_def = OBJECT_TYPES[rev_link.source_type]
+        target_def = OBJECT_TYPES[rev_link.target_type]
+        target_pk = rev_link.target_pk or _get_primary_column(target_def)
         source_cols = [p.column for p in source_def.properties
                        if p.prop_type in ("primary_key", "regular")]
         cols_str = ", ".join(f"s.{c}" for c in source_cols)
 
-        sql = f"""
-            SELECT {cols_str}
-            FROM {source_def.table} s
-            WHERE s.{rev_link.source_fk} = ?
-        """
+        if rev_link.cardinality == "many_to_many":
+            sql = f"""
+                SELECT {cols_str}
+                FROM {source_def.table} s
+                JOIN {rev_link.bridge_table} b ON b.{rev_link.bridge_source_fk} = s.{rev_link.source_pk or _get_primary_column(source_def)}
+                WHERE b.{rev_link.bridge_target_fk} = ?
+            """
+        else:
+            sql = f"""
+                SELECT {cols_str}
+                FROM {source_def.table} s
+                WHERE s.{rev_link.source_fk} = ?
+            """
         conn = get_connection()
         rows = conn.execute(sql, (object_id,)).fetchall()
         conn.close()
@@ -302,20 +382,10 @@ def _build_link_joins(
             new_alias = f"l{alias_counter[0]}"
             alias_counter[0] += 1
 
-            if direction == "forward":
-                target_table = OBJECT_TYPES[link.target_type].table
-                join_clauses.append(
-                    f"JOIN {target_table} {new_alias} "
-                    f"ON {current_alias}.{link.source_fk} = {new_alias}.id"
-                )
-                current_type = link.target_type
-            else:  # reverse
-                source_table = OBJECT_TYPES[link.source_type].table
-                join_clauses.append(
-                    f"JOIN {source_table} {new_alias} "
-                    f"ON {current_alias}.id = {new_alias}.{link.source_fk}"
-                )
-                current_type = link.source_type
+            join_clause, current_type = _build_link_join_clause(
+                link, direction, current_alias, new_alias, "JOIN"
+            )
+            join_clauses.append(join_clause)
 
             join_cache[cache_key] = new_alias
             current_alias = new_alias
@@ -351,7 +421,7 @@ def fill_derived_batch(results: list[dict], object_type: str):
     if not obj_def:
         return
     for obj in results:
-        obj_id = obj.get("id")
+        obj_id = _get_object_id_value(obj, obj_def)
         if obj_id is None:
             continue
         for p in obj_def.properties:
@@ -482,20 +552,10 @@ def query_objects_v2(
                     raise ValueError(f"排序路径 '{order_by}' 中无法从 '{current_type}' 找到 '{segment}'")
                 new_alias = f"l{alias_counter[0]}"
                 alias_counter[0] += 1
-                if direction == "forward":
-                    target_table = OBJECT_TYPES[link.target_type].table
-                    join_clauses.append(
-                        f"LEFT JOIN {target_table} {new_alias} "
-                        f"ON {current_alias}.{link.source_fk} = {new_alias}.id"
-                    )
-                    current_type = link.target_type
-                else:
-                    source_table = OBJECT_TYPES[link.source_type].table
-                    join_clauses.append(
-                        f"LEFT JOIN {source_table} {new_alias} "
-                        f"ON {current_alias}.id = {new_alias}.{link.source_fk}"
-                    )
-                    current_type = link.source_type
+                join_clause, current_type = _build_link_join_clause(
+                    link, direction, current_alias, new_alias, "LEFT JOIN"
+                )
+                join_clauses.append(join_clause)
                 join_cache[cache_key] = new_alias
                 current_alias = new_alias
 
@@ -612,21 +672,47 @@ def exclude_objects(
     # 尝试正向/反向匹配
     join_condition = None
     if link and link.source_type == exclude_target_type and link.target_type == object_type:
-        # target 持有 FK 指向主表: Score.student_id -> Student.id
-        join_condition = f"sub.{link.source_fk} = main.id"
+        if link.cardinality == "many_to_many":
+            join_condition = (
+                f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} IN ("
+                f"SELECT {link.bridge_target_fk} FROM {link.bridge_table} "
+                f"WHERE {link.bridge_source_fk} = main.{link.source_pk or _get_primary_column(object_type)})"
+            )
+        else:
+            join_condition = f"sub.{link.source_fk} = main.{link.target_pk or _get_primary_column(object_type)}"
     elif link and link.source_type == object_type and link.target_type == exclude_target_type:
-        # 主表持有 FK: 不太常见的方向
-        join_condition = f"sub.id = main.{link.source_fk}"
+        if link.cardinality == "many_to_many":
+            join_condition = (
+                f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} IN ("
+                f"SELECT {link.bridge_target_fk} FROM {link.bridge_table} "
+                f"WHERE {link.bridge_source_fk} = main.{link.source_pk or _get_primary_column(object_type)})"
+            )
+        else:
+            join_condition = f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} = main.{link.source_fk}"
     else:
         # 通过 reverse name 查找
         for l in LINK_TYPES.values():
             if l.reverse_name == exclude_link:
                 if l.source_type == exclude_target_type and l.target_type == object_type:
-                    join_condition = f"sub.{l.source_fk} = main.id"
+                    if l.cardinality == "many_to_many":
+                        join_condition = (
+                            f"sub.{l.source_pk or _get_primary_column(exclude_target_type)} IN ("
+                            f"SELECT {l.bridge_source_fk} FROM {l.bridge_table} "
+                            f"WHERE {l.bridge_target_fk} = main.{l.target_pk or _get_primary_column(object_type)})"
+                        )
+                    else:
+                        join_condition = f"sub.{l.source_fk} = main.{l.target_pk or _get_primary_column(object_type)}"
                     link = l
                     break
                 elif l.source_type == object_type and l.target_type == exclude_target_type:
-                    join_condition = f"sub.id = main.{l.source_fk}"
+                    if l.cardinality == "many_to_many":
+                        join_condition = (
+                            f"sub.{l.target_pk or _get_primary_column(exclude_target_type)} IN ("
+                            f"SELECT {l.bridge_target_fk} FROM {l.bridge_table} "
+                            f"WHERE {l.bridge_source_fk} = main.{l.source_pk or _get_primary_column(object_type)})"
+                        )
+                    else:
+                        join_condition = f"sub.{l.target_pk or _get_primary_column(exclude_target_type)} = main.{l.source_fk}"
                     link = l
                     break
 
@@ -682,18 +768,10 @@ def exclude_objects(
                     new_alias = f"sx{sub_alias_counter[0]}"
                     sub_alias_counter[0] += 1
 
-                    if direction == "forward":
-                        target_table = OBJECT_TYPES[lnk.target_type].table
-                        sub_join_clauses.append(
-                            f"JOIN {target_table} {new_alias} ON {current_alias}.{lnk.source_fk} = {new_alias}.id"
-                        )
-                        current_type = lnk.target_type
-                    else:
-                        source_table = OBJECT_TYPES[lnk.source_type].table
-                        sub_join_clauses.append(
-                            f"JOIN {source_table} {new_alias} ON {current_alias}.id = {new_alias}.{lnk.source_fk}"
-                        )
-                        current_type = lnk.source_type
+                    join_clause, current_type = _build_link_join_clause(
+                        lnk, direction, current_alias, new_alias, "JOIN"
+                    )
+                    sub_join_clauses.append(join_clause)
 
                     sub_join_cache[cache_key] = new_alias
                     current_alias = new_alias
@@ -966,20 +1044,10 @@ def _resolve_field_ref(
             new_alias = f"l{alias_counter[0]}"
             alias_counter[0] += 1
 
-            if direction == "forward":
-                target_table = OBJECT_TYPES[link.target_type].table
-                join_clauses.append(
-                    f"JOIN {target_table} {new_alias} "
-                    f"ON {current_alias}.{link.source_fk} = {new_alias}.id"
-                )
-                current_type = link.target_type
-            else:
-                source_table = OBJECT_TYPES[link.source_type].table
-                join_clauses.append(
-                    f"JOIN {source_table} {new_alias} "
-                    f"ON {current_alias}.id = {new_alias}.{link.source_fk}"
-                )
-                current_type = link.source_type
+            join_clause, current_type = _build_link_join_clause(
+                link, direction, current_alias, new_alias, "JOIN"
+            )
+            join_clauses.append(join_clause)
 
             join_cache[cache_key] = new_alias
             current_alias = new_alias
@@ -1024,7 +1092,7 @@ def query_object_set(
     sql = f"""
         SELECT {cols_str}
         FROM ({obj_set.sql.strip()}) _subset
-        JOIN {obj_def.table} o ON o.id = _subset.id
+        JOIN {obj_def.table} o ON o.{_get_primary_column(obj_def)} = _subset.object_id
     """
     params = []
     where_clauses = []

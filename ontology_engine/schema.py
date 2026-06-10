@@ -39,8 +39,13 @@ class LinkTypeDef:
     source_type: str            # 源 Object Type（持有 FK 的一方）
     target_type: str            # 目标 Object Type
     cardinality: str            # "many_to_one" | "one_to_many" | "many_to_many"
-    source_fk: str              # 源表中的 FK 列名
     reverse_name: str           # 反向遍历时的名称，如 "scores"
+    source_fk: Optional[str] = None      # 源表中的 FK 列名
+    source_pk: Optional[str] = None      # 源表用于连接的主键列名
+    target_pk: Optional[str] = None      # 目标表用于连接的主键列名
+    bridge_table: Optional[str] = None   # many_to_many 时的桥表名
+    bridge_source_fk: Optional[str] = None   # 桥表中指向 source 的 FK
+    bridge_target_fk: Optional[str] = None   # 桥表中指向 target 的 FK
 
 
 # ---- Action Type ----
@@ -100,4 +105,4 @@ class ObjectSetDef:
     display_name: str           # "优秀学生"
     object_type: str            # "Student" — 集合中对象的类型
     description: str            # "平均分 >= 85 的学生"
-    sql: str                    # SQL 查询，返回该类型的主键 id 列表
+    sql: str                    # SQL 查询，返回该类型的主键列表，列别名应为 object_id

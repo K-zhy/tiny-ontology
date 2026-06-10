@@ -29,7 +29,7 @@ PROP_ALIASES = {
     "姓名": "name", "名称": "name", "名字": "name",
     "年龄": "age", "性别": "gender", "班级": "className",
     "科目": "subject", "院系": "department", "部门": "department",
-    "学分": "credit", "学期": "semester",
+    "学分": "credit",
     "分数值": "scoreValue", "成绩": "scoreValue",
     "考试日期": "examDate",
 }
@@ -260,7 +260,7 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
                 "type": "object",
                 "properties": {
                     "object_type": {"type": "string", "enum": relevant_types},
-                    "object_id": {"type": "integer", "description": "对象的数字 ID"},
+                    "object_id": {"type": "string", "description": "对象主键，使用业务编号字符串"},
                 },
                 "required": ["object_type", "object_id"],
             },
@@ -468,7 +468,7 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 - "数据结构不及格（<60）的" → query_objects(type="Score", filters={{"course.name":"数据结构","scoreValue":{{"op":"lt","value":60}}}})
 - "高等数学低于80 **或** 数据结构低于80" → 分两次 query_objects 分别查，合并 studentName 列表（$or 不支持跨 Link 条件，须拆开查）
 - "张三或李四的成绩" → query_objects(type="Score", filters={{"student.name": {{"op":"in","value":["张三","李四"]}}}})
-- "还没有老师的课程" → query_objects(type="Course", filters={{"teacherId": {{"op":"is_null"}}}})
+- "还没有老师的课程" → exclude_objects(object_type="Course", exclude_link="taughtBy", exclude_target_type="Teacher")
 - "按课程名排序所有成绩" → query_objects(type="Score", order_by="course.name")
 - "有哪些女学生" → query_objects(type="Student", filters={{"gender": "F"}})
 - "哪些学生没有选修过李教授的课" → exclude_objects(object_type="Student", exclude_link="earnedBy", exclude_target_type="Score", exclude_target_filters={{"course.teacher.name":"李教授"}})
@@ -502,18 +502,18 @@ def enrich_score_context(results: list[dict]):
     conn = get_connection()
     placeholders = ",".join("?" * len(obj_ids))
     fk_rows = conn.execute(
-        f"SELECT id, student_id, course_id FROM score WHERE id IN ({placeholders})",
+        f"SELECT id, Sno, Cno FROM score WHERE id IN ({placeholders})",
         tuple(obj_ids)
     ).fetchall()
     conn.close()
-    id_to_fk = {r["id"]: (r["student_id"], r["course_id"]) for r in fk_rows}
+    id_to_fk = {r["id"]: (r["Sno"], r["Cno"]) for r in fk_rows}
     sids, cids = set(), set()
     for obj in results:
         fk = id_to_fk.get(obj["id"])
         if fk:
             sid, cid = fk
-            obj["studentId"] = sid
-            obj["courseId"] = cid
+            obj["studentSno"] = sid
+            obj["courseCno"] = cid
             if sid:
                 sids.add(sid)
             if cid:
@@ -521,33 +521,30 @@ def enrich_score_context(results: list[dict]):
     s_names, c_names, c_teachers = {}, {}, {}
     if sids:
         conn = get_connection()
-        rows = conn.execute(f"SELECT id, name FROM student WHERE id IN ({','.join('?'*len(sids))})", tuple(sids)).fetchall()
-        s_names = {r["id"]: r["name"] for r in rows}
+        rows = conn.execute(f"SELECT Sno, name FROM student WHERE Sno IN ({','.join('?'*len(sids))})", tuple(sids)).fetchall()
+        s_names = {r["Sno"]: r["name"] for r in rows}
         conn.close()
     if cids:
         conn = get_connection()
-        rows = conn.execute(f"SELECT id, name, teacher_id FROM course WHERE id IN ({','.join('?'*len(cids))})", tuple(cids)).fetchall()
-        tids = set()
+        rows = conn.execute(f"SELECT Cno, name FROM course WHERE Cno IN ({','.join('?'*len(cids))})", tuple(cids)).fetchall()
         for r in rows:
-            c_names[r["id"]] = r["name"]
-            if r["teacher_id"]:
-                tids.add(r["teacher_id"])
-                c_teachers[r["id"]] = r["teacher_id"]
-        if tids:
-            t_rows = conn.execute(f"SELECT id, name FROM teacher WHERE id IN ({','.join('?'*len(tids))})", tuple(tids)).fetchall()
-            t_names = {r["id"]: r["name"] for r in t_rows}
-            for cid, tid in c_teachers.items():
-                c_teachers[cid] = t_names.get(tid, f"Teacher#{tid}")
+            c_names[r["Cno"]] = r["name"]
+        tc_rows = conn.execute(
+            f"SELECT tc.Cno, t.Tno, t.name FROM tc JOIN teacher t ON tc.Tno = t.Tno WHERE tc.Cno IN ({','.join('?'*len(cids))})",
+            tuple(cids)
+        ).fetchall()
+        for row in tc_rows:
+            c_teachers.setdefault(row["Cno"], []).append(row["name"])
         conn.close()
     for obj in results:
-        sid = obj.get("studentId") or obj.get("student_id")
-        cid = obj.get("courseId") or obj.get("course_id")
+        sid = obj.get("studentSno") or obj.get("Sno")
+        cid = obj.get("courseCno") or obj.get("Cno")
         if sid and sid in s_names:
             obj["studentName"] = s_names[sid]
         if cid and cid in c_names:
             obj["courseName"] = c_names[cid]
             if cid in c_teachers:
-                obj["teacherName"] = c_teachers[cid]
+                obj["teacherName"] = "、".join(c_teachers[cid])
 
 
 # ---- 工具执行 ----
@@ -590,8 +587,9 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
                     if k.startswith("_") or k == "name":
                         continue
                     parts.append(f"{k}={v}")
-                label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
-                lines.append(f"  {obj_type}#{obj.get('id', '?')} '{label}': {', '.join(parts[:8])}")
+                obj_key = obj.get("_id") or obj.get("Sno") or obj.get("Tno") or obj.get("Cno") or obj.get("id", "?")
+                label = obj_name if obj_name else f"{obj_type}#{obj_key}"
+                lines.append(f"  {obj_type}#{obj_key} '{label}': {', '.join(parts[:8])}")
             if len(results) > 15:
                 lines.append(f"  ...及其他 {len(results) - 15} 个结果")
             return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}", "data": results}
@@ -617,16 +615,16 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
                     if k.startswith("_") or k == "name":
                         continue
                     parts.append(f"{k}={v}")
-                label = obj_name if obj_name else f"{obj_type}#{obj.get('id', '?')}"
+                label = obj_name if obj_name else f"{obj_type}#{obj.get('_id') or obj.get('Sno') or obj.get('Tno') or obj.get('Cno') or obj.get('id', '?')}"
                 lines.append(f"  {label}: {', '.join(parts[:8])}")
             return {"content": "\n".join(lines), "summary": f"set {set_name}: {len(results)} results", "data": results}
 
         elif tool_name == "get_object_detail":
             obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
-            obj_id = inp.get("object_id", 0)
+            obj_id = inp.get("object_id", "")
             obj = get_object(obj_type, obj_id)
             if obj is None:
-                return {"content": f"{obj_type} id={obj_id} 不存在", "summary": "not found", "error": "not found"}
+                return {"content": f"{obj_type} object_id={obj_id} 不存在", "summary": "not found", "error": "not found"}
             fill_derived_batch([obj], obj_type)
             lines = [f"{obj_type}#{obj_id} '{obj.get('name', '')}'"]
             for k, v in obj.items():

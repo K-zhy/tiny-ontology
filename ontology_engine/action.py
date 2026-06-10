@@ -52,8 +52,8 @@ def execute_action(action_name: str, params: dict, operator: str = "system") -> 
 def _run_validation(func_name: str, params: dict) -> tuple[bool, str]:
     """执行业务校验 Function"""
     if func_name == "validateScore":
-        student_id = params.get("studentId")
-        course_id = params.get("courseId")
+        student_sno = params.get("studentSno")
+        course_cno = params.get("courseCno")
         score_value = params.get("scoreValue")
 
         # 分值范围校验
@@ -63,12 +63,12 @@ def _run_validation(func_name: str, params: dict) -> tuple[bool, str]:
         # 重复录入校验
         conn = get_connection()
         row = conn.execute(
-            "SELECT id FROM score WHERE student_id = ? AND course_id = ?",
-            (student_id, course_id)
+            "SELECT id FROM score WHERE Sno = ? AND Cno = ?",
+            (student_sno, course_cno)
         ).fetchone()
         conn.close()
         if row:
-            return False, f"该学生(id={student_id})在该课程(id={course_id})已有成绩记录(id={row['id']})，不能重复录入"
+            return False, f"该学生(Sno={student_sno})在该课程(Cno={course_cno})已有成绩记录(id={row['id']})，不能重复录入"
 
         return True, ""
     return True, ""
@@ -79,11 +79,12 @@ def _run_action(conn, action_def, params: dict) -> dict:
     name = action_def.api_name
 
     if name == "createScore":
-        cursor = conn.execute(
-            "INSERT INTO score (student_id, course_id, score_value, exam_date) VALUES (?, ?, ?, ?)",
-            (params["studentId"], params["courseId"], params["scoreValue"], params["examDate"])
+        next_score_id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM score").fetchone()[0]
+        conn.execute(
+            "INSERT INTO score (id, Sno, Cno, score_value, exam_date) VALUES (?, ?, ?, ?, ?)",
+            (next_score_id, params["studentSno"], params["courseCno"], params["scoreValue"], params["examDate"])
         )
-        return {"scoreId": cursor.lastrowid, "message": "成绩录入成功"}
+        return {"scoreId": next_score_id, "message": "成绩录入成功"}
 
     elif name == "updateScore":
         updates = []
@@ -105,10 +106,12 @@ def _run_action(conn, action_def, params: dict) -> dict:
         return {"message": "成绩删除成功"}
 
     elif name == "assignTeacher":
+        next_tc_id = conn.execute("SELECT COALESCE(MAX(id), 0) + 1 FROM tc").fetchone()[0]
+        semester = params.get("semester")
         conn.execute(
-            "UPDATE course SET teacher_id = ? WHERE id = ?",
-            (params["teacherId"], params["courseId"])
+            "INSERT OR IGNORE INTO tc (id, Cno, Tno, semester) VALUES (?, ?, ?, ?)",
+            (next_tc_id, params["courseCno"], params["teacherTno"], semester)
         )
-        return {"message": "教师分配成功"}
+        return {"message": "教师授课关系创建成功"}
 
     return {"message": "Action executed"}
