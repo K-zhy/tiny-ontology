@@ -1069,6 +1069,98 @@ def _resolve_field_ref(
         return f"t0.{prop.column}"
 
 
+def _try_parse_number(value):
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        text = value.strip().replace("%", "")
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    return None
+
+
+def _match_filter_condition(actual, cond) -> bool:
+    """在 Python 对象上匹配单个过滤条件（语义对齐 _compile_condition）。"""
+    if not (isinstance(cond, dict) and "op" in cond):
+        return actual == cond
+
+    op = str(cond["op"]).lower()
+    expected = cond.get("value")
+
+    if op == "is_null":
+        return actual is None
+    if op == "is_not_null":
+        return actual is not None
+    if op == "between":
+        if not (isinstance(expected, (list, tuple)) and len(expected) == 2):
+            return False
+        lo, hi = expected
+        a_num = _try_parse_number(actual)
+        lo_num = _try_parse_number(lo)
+        hi_num = _try_parse_number(hi)
+        if a_num is not None and lo_num is not None and hi_num is not None:
+            return lo_num <= a_num <= hi_num
+        if actual is None:
+            return False
+        return lo <= actual <= hi
+    if op == "in":
+        return isinstance(expected, (list, tuple)) and actual in expected
+    if op == "not_in":
+        return isinstance(expected, (list, tuple)) and actual not in expected
+    if op in ("like", "ilike"):
+        if actual is None or expected is None:
+            return False
+        text = str(actual)
+        pattern = str(expected).replace("%", "")
+        if op == "ilike":
+            text = text.lower()
+            pattern = pattern.lower()
+        return pattern in text
+
+    a_num = _try_parse_number(actual)
+    e_num = _try_parse_number(expected)
+    if a_num is not None and e_num is not None:
+        left, right = a_num, e_num
+    else:
+        left, right = actual, expected
+
+    if op == "eq":
+        return left == right
+    if op == "ne":
+        return left != right
+    if op == "gt":
+        return left is not None and right is not None and left > right
+    if op == "gte":
+        return left is not None and right is not None and left >= right
+    if op == "lt":
+        return left is not None and right is not None and left < right
+    if op == "lte":
+        return left is not None and right is not None and left <= right
+    return False
+
+
+def _matches_object_filters(obj: dict, filters: Optional[dict]) -> bool:
+    if not filters:
+        return True
+
+    # 顶层默认 AND；支持 $or 分支
+    for key, cond in filters.items():
+        if key == "$or":
+            if not isinstance(cond, list) or not cond:
+                return False
+            if not any(_matches_object_filters(obj, branch) for branch in cond if isinstance(branch, dict)):
+                return False
+            continue
+
+        actual = obj.get(key)
+        if not _match_filter_condition(actual, cond):
+            return False
+
+    return True
+
+
 def query_object_set(
     set_name: str,
     filters: Optional[dict] = None,
@@ -1080,6 +1172,29 @@ def query_object_set(
     obj_set = OBJECT_SETS.get(set_name)
     if not obj_set:
         return {"success": False, "error": f"Unknown ObjectSet: {set_name}"}
+
+    # 优先走属性过滤定义模式（支持派生属性过滤）
+    if obj_set.filters:
+        scan_limit = min(max(limit * 10, 500), 5000)
+        candidates = query_objects_v2(obj_set.object_type, limit=scan_limit)
+        result_rows = []
+        for item in candidates:
+            if not _matches_object_filters(item, obj_set.filters):
+                continue
+            if not _matches_object_filters(item, filters):
+                continue
+            result_rows.append(item)
+            if len(result_rows) >= limit:
+                break
+        return {
+            "success": True,
+            "data": result_rows,
+            "object_set": set_name,
+            "definition_mode": "filters",
+        }
+
+    if not obj_set.sql.strip():
+        return {"success": False, "error": f"ObjectSet '{set_name}' 未配置 sql 或 filters"}
 
     obj_def = OBJECT_TYPES[obj_set.object_type]
     regular_cols = [
@@ -1098,11 +1213,15 @@ def query_object_set(
     where_clauses = []
 
     if filters:
-        for key, value in filters.items():
-            prop = next((p for p in obj_def.properties if p.name == key), None)
-            if prop and prop.column:
-                where_clauses.append(f"o.{prop.column} = ?")
-                params.append(value)
+        try:
+            for key, value in filters.items():
+                if key == "$or":
+                    continue
+                prop = next((p for p in obj_def.properties if p.name == key), None)
+                if prop and prop.column:
+                    where_clauses.append(_compile_condition(f"o.{prop.column}", value, params))
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         if where_clauses:
             sql += " WHERE " + " AND ".join(where_clauses)
 
@@ -1124,4 +1243,9 @@ def query_object_set(
         results.append(obj)
 
     fill_derived_batch(results, obj_set.object_type)
-    return {"success": True, "data": results, "object_set": set_name}
+    return {
+        "success": True,
+        "data": results,
+        "object_set": set_name,
+        "definition_mode": "sql",
+    }

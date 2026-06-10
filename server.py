@@ -205,11 +205,14 @@ def api_list_object_sets():
     """列出所有 ObjectSet 定义"""
     result = {}
     for name, os_def in OBJECT_SETS.items():
+        mode = "filters" if os_def.filters else "sql"
         result[name] = {
             "apiName": os_def.api_name,
             "displayName": os_def.display_name,
             "objectType": os_def.object_type,
             "description": os_def.description,
+            "definitionMode": mode,
+            "filters": os_def.filters if os_def.filters else None,
         }
     return result
 

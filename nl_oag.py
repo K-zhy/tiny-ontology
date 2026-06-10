@@ -238,13 +238,15 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
         },
         {
             "name": "query_object_set",
-            "description": "查询预定义的 ObjectSet（具名对象集合）。可用: TopStudents(优秀学生)、PassedCourses(及格课程)。",
+            "description": "查询预定义的 ObjectSet（具名对象集合）。可用: " + "、".join(
+                f"{s.api_name}({s.display_name})" for s in OBJECT_SETS.values()
+            ) + "。",
             "input_schema": {
                 "type": "object",
                 "properties": {
                     "set_name": {
                         "type": "string",
-                        "enum": ["TopStudents", "PassedCourses"],
+                        "enum": list(OBJECT_SETS.keys()),
                         "description": "ObjectSet 名称",
                     },
                     "filters": {"type": "object", "description": "在集合结果上额外过滤"},
@@ -267,11 +269,11 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
         },
         {
             "name": "execute_action",
-            "description": "执行数据写入操作: createScore、updateScore、deleteScore、assignTeacher。",
+            "description": "执行数据写入操作: " + "、".join(ACTION_TYPES.keys()) + "。",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "action_name": {"type": "string", "enum": ["createScore", "updateScore", "deleteScore", "assignTeacher"]},
+                    "action_name": {"type": "string", "enum": list(ACTION_TYPES.keys())},
                     "params": {"type": "object", "description": "操作参数"},
                 },
                 "required": ["action_name"],
@@ -413,6 +415,10 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 
     types_str = "、".join(relevant_types)
     fn_section = "\n".join(fn_lines) if fn_lines else "（无）"
+    object_sets_section = "\n".join(
+        f"- **{s.api_name}**({s.display_name}): {s.description}"
+        for s in OBJECT_SETS.values()
+    )
 
     return f"""你是一个 Ontology 对象查询助手。系统使用 Ontology Augmented Generation（OAG）模式：所有数据建模为业务对象（Student、Course、Score、Teacher），Ontology 提供 Data（对象+Link）、Logic（函数）、Action（写操作）三类能力来增强你的回答。
 
@@ -452,8 +458,7 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 {schema}
 
 ## ObjectSets（预定义集合）
-- **TopStudents**: 平均分 >= 85 的优秀学生
-- **PassedCourses**: 课程平均分 >= 60 的及格课程
+{object_sets_section}
 
 ## 常用查询模式
 - "张三的数学成绩" → query_objects(type="Score", filters={{"student.name": "张三", "course.name": "数学"}})

@@ -105,4 +105,5 @@ class ObjectSetDef:
     display_name: str           # "优秀学生"
     object_type: str            # "Student" — 集合中对象的类型
     description: str            # "平均分 >= 85 的学生"
-    sql: str                    # SQL 查询，返回该类型的主键列表，列别名应为 object_id
+    filters: Optional[dict] = None  # 属性过滤定义（支持与 query_objects_v2 一致的过滤语法）
+    sql: str = ""                 # 兼容旧定义：SQL 查询，返回主键列表，列别名应为 object_id
