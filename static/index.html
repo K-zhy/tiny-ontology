@@ -464,6 +464,84 @@ body {
 .raw-table-body .col-pk { color: var(--accent); font-weight:500; }
 .raw-table-body .col-fk { color: var(--sage); }
 
+/* ---- Conversation History ---- */
+.conv-list { display:flex; flex-direction:column; gap:4px; }
+.conv-item {
+  border:1px solid var(--border); border-radius:var(--radius);
+  overflow:hidden; transition:border-color var(--ease);
+}
+.conv-item:hover { border-color:var(--border-lit); }
+.conv-item-summary {
+  display:flex; align-items:baseline; gap:10px;
+  padding:6px 10px; background:var(--bg-base); cursor:pointer; user-select:none;
+}
+.conv-item-summary:hover { background:#f0ece3; }
+.conv-item-time { font-size:9px; color:var(--ink-muted); font-family:'JetBrains Mono',monospace; white-space:nowrap; flex-shrink:0; }
+.conv-item-types { font-size:9px; color:var(--sage); white-space:nowrap; flex-shrink:0; }
+.conv-item-q { font-size:11px; color:var(--ink); font-weight:500; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.conv-item-ans { font-size:10px; color:var(--ink-soft); padding:0 10px 6px; line-height:1.4; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer; }
+.conv-item-arrow { font-size:9px; color:var(--ink-muted); flex-shrink:0; transition:transform 0.15s; }
+.conv-item.open > .conv-item-summary > .conv-item-arrow { transform:rotate(90deg); }
+.conv-detail { display:none; border-top:1px solid var(--border); }
+.conv-item.open > .conv-detail { display:block; }
+/* Conversation sections */
+.conv-section { border-bottom:1px solid var(--border); }
+.conv-section:last-child { border-bottom:none; }
+.conv-section-hd {
+  display:flex; align-items:center; gap:6px;
+  padding:4px 10px; cursor:pointer; user-select:none;
+  background:#f5f1ea; font-size:10px; font-weight:600; color:var(--ink-soft);
+}
+.conv-section-hd:hover { background:#ede8df; }
+.conv-section-hd .cs-lbl { flex:1; }
+.conv-section-hd .cs-arrow { font-size:8px; color:var(--ink-muted); transition:transform 0.15s; }
+.conv-section-hd.open .cs-arrow { transform:rotate(90deg); }
+.conv-section-body { display:none; }
+.conv-section-body.open { display:block; }
+.conv-sys-prompt {
+  margin:8px 10px; white-space:pre-wrap; font-size:10px;
+  font-family:'JetBrains Mono',monospace; color:var(--ink-soft); line-height:1.5;
+  max-height:200px; overflow-y:auto; background:var(--bg-base);
+  padding:6px 8px; border-radius:2px; border:1px solid var(--border);
+}
+.conv-tool-list { display:flex; flex-wrap:wrap; gap:4px; padding:8px 10px; }
+.conv-tool-chip { font-size:9px; font-family:'JetBrains Mono',monospace; color:var(--sage);
+  background:#eef6f0; border:1px solid #d0e8d8; border-radius:10px; padding:1px 7px; }
+/* Turn list */
+.conv-turns { display:flex; flex-direction:column; }
+.conv-turn { border-bottom:1px solid var(--border); }
+.conv-turn:last-child { border-bottom:none; }
+.conv-turn-hd {
+  display:flex; align-items:center; gap:8px;
+  padding:5px 10px; cursor:pointer; user-select:none; background:var(--bg-surface);
+}
+.conv-turn-hd:hover { background:#f7f4ee; }
+.conv-turn-role {
+  font-family:'JetBrains Mono',monospace; font-size:9px; font-weight:700;
+  text-transform:uppercase; letter-spacing:0.06em; padding:1px 6px;
+  border-radius:3px; white-space:nowrap; flex-shrink:0;
+}
+.role-user    { background:#eef6f0; color:#3a6257; }
+.role-assistant { background:#eef0fa; color:#5060b0; }
+.conv-turn-preview { font-size:10px; color:var(--ink-muted); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.conv-turn-badge { font-size:9px; color:var(--ink-muted); background:var(--bg-base); border:1px solid var(--border); border-radius:10px; padding:1px 6px; white-space:nowrap; }
+.conv-turn-arrow { font-size:8px; color:var(--ink-muted); flex-shrink:0; transition:transform 0.15s; }
+.conv-turn-hd.open .conv-turn-arrow { transform:rotate(90deg); }
+.conv-turn-body { display:none; padding:8px 10px; border-top:1px solid var(--border); background:#fdfaf6; }
+.conv-turn-body.open { display:block; }
+/* Turn content */
+.turn-text { white-space:pre-wrap; font-size:11px; color:var(--ink); line-height:1.55; max-height:300px; overflow-y:auto; }
+.turn-tool-block { border:1px solid var(--border); border-radius:2px; margin-bottom:5px; overflow:hidden; }
+.turn-tool-block:last-child { margin-bottom:0; }
+.turn-tool-name { display:flex; align-items:center; gap:6px; padding:3px 8px; background:var(--bg-base);
+  font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:var(--sage); border-bottom:1px solid var(--border); }
+.turn-tool-input { padding:5px 8px; font-size:9.5px; font-family:'JetBrains Mono',monospace;
+  color:var(--ink-soft); white-space:pre-wrap; word-break:break-all; max-height:140px; overflow-y:auto; background:#fdfaf6; }
+.turn-tool-result-name { display:flex; align-items:center; gap:6px; padding:3px 8px; background:#fdf4ee;
+  font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:600; color:#a05020; border-bottom:1px solid #f0e0cc; }
+.turn-tool-result { padding:5px 8px; font-size:9.5px; font-family:'JetBrains Mono',monospace;
+  color:var(--ink-soft); white-space:pre-wrap; word-break:break-all; max-height:180px; overflow-y:auto; background:#fefbf8; }
+
 /* ---- misc ---- */
 .spinner {
   display:inline-block; width:12px; height:12px;
@@ -543,6 +621,7 @@ body {
     <button class="tab-btn active" data-tab="functions" onclick="switchTab('functions')">Functions <span id="func-count" style="font-size:10px;color:var(--ink-muted);"></span></button>
     <button class="tab-btn" data-tab="actions" onclick="switchTab('actions')">Actions</button>
     <button class="tab-btn" data-tab="rawtables" onclick="switchTab('rawtables')">Raw Tables</button>
+    <button class="tab-btn" data-tab="history" onclick="switchTab('history')">History</button>
     <button class="tab-toggle" onclick="toggleBottomPanel()" title="Collapse">&#9660;</button>
   </div>
   <div class="tab-content active" id="tab-functions">
@@ -573,6 +652,9 @@ body {
     <div id="raw-tables-list">
       <span class="muted"><span class="spinner"></span>loading&hellip;</span>
     </div>
+  </div>
+  <div class="tab-content" id="tab-history">
+    <div id="history-list"><span class="muted">点击标签加载对话历史&hellip;</span></div>
   </div>
 </div>
 
@@ -1165,6 +1247,181 @@ function switchTab(name) {
     window._rawTablesLoaded = true;
     loadRawTables();
   }
+  if (name === 'history') { loadHistory(); }
+}
+
+// ======================== Conversation History ========================
+async function loadHistory(){
+  var el = document.getElementById('history-list');
+  el.innerHTML = '<span class="muted"><span class="spinner"></span>loading&hellip;</span>';
+  try {
+    var resp = await fetch('/ontology/conversations?limit=100');
+    var data = await resp.json();
+    if(!data.success){ el.innerHTML='<div class="error-msg">加载失败</div>'; return; }
+    var list = data.data || [];
+    if(!list.length){ el.innerHTML='<span class="muted">暂无对话历史</span>'; return; }
+    var html = '<div class="conv-list">';
+    list.forEach(function(item){
+      var ts = item.timestamp ? item.timestamp.replace('T',' ').slice(0,19) : '';
+      var types = (item.relevant_types||[]).join('/');
+      var ansLine = (item.answer||'').split('\n')[0].slice(0,90);
+      var cid = item.id;
+      html += '<div class="conv-item" id="ci-'+escHtml(cid)+'">';
+      html += '<div class="conv-item-summary" onclick="toggleConvItem(this)">';
+      html += '<span class="conv-item-time">'+escHtml(ts)+'</span>';
+      if(types) html += '<span class="conv-item-types">['+escHtml(types)+']</span>';
+      html += '<span class="conv-item-q">'+escHtml(item.query)+'</span>';
+      html += '<span class="conv-item-arrow">&#9658;</span>';
+      html += '</div>';
+      if(ansLine) html += '<div class="conv-item-ans" onclick="toggleConvItem(this.previousElementSibling)">&#x21aa; '+escHtml(ansLine)+'</div>';
+      html += '<div class="conv-detail" data-convid="'+escHtml(cid)+'"></div>';
+      html += '</div>';
+    });
+    html += '</div>';
+    el.innerHTML = html;
+  } catch(e) {
+    el.innerHTML = '<div class="error-msg">'+escHtml(e.message)+'</div>';
+  }
+}
+
+async function toggleConvItem(summaryEl){
+  var item = summaryEl.closest ? summaryEl.closest('.conv-item') : summaryEl.parentElement;
+  if(!item) return;
+  var isOpen = item.classList.contains('open');
+  if(isOpen){ item.classList.remove('open'); return; }
+  item.classList.add('open');
+  var detail = item.querySelector('.conv-detail');
+  if(!detail || detail.dataset.loaded) return;
+  detail.dataset.loaded = '1';
+  var convId = detail.dataset.convid;
+  detail.innerHTML = '<span class="muted" style="padding:8px 10px;display:block;"><span class="spinner"></span>加载中…</span>';
+  try {
+    var resp = await fetch('/ontology/conversations/'+encodeURIComponent(convId));
+    var result = await resp.json();
+    if(!result.success){ detail.innerHTML='<div class="error-msg" style="padding:8px">'+escHtml(result.detail||'错误')+'</div>'; return; }
+    detail.innerHTML = renderConversation(result.data);
+  } catch(e) {
+    detail.innerHTML = '<div class="error-msg" style="padding:8px">'+escHtml(e.message)+'</div>';
+  }
+}
+
+function toggleConvSection(hdEl){
+  var body = hdEl.nextElementSibling;
+  if(!body) return;
+  var open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  hdEl.classList.toggle('open', !open);
+}
+
+function toggleConvTurn(hdEl){
+  var body = hdEl.nextElementSibling;
+  if(!body) return;
+  var open = body.classList.contains('open');
+  body.classList.toggle('open', !open);
+  hdEl.classList.toggle('open', !open);
+}
+
+function renderConversation(conv){
+  var html = '';
+
+  // System Prompt
+  html += '<div class="conv-section">';
+  html += '<div class="conv-section-hd" onclick="toggleConvSection(this)">';
+  html += '<span class="cs-arrow">&#9658;</span><span class="cs-lbl">System Prompt</span></div>';
+  html += '<div class="conv-section-body">';
+  html += '<pre class="conv-sys-prompt">'+escHtml(conv.system_prompt||'')+'</pre>';
+  html += '</div></div>';
+
+  // Tools
+  if(conv.tool_schemas && conv.tool_schemas.length){
+    html += '<div class="conv-section">';
+    html += '<div class="conv-section-hd" onclick="toggleConvSection(this)">';
+    html += '<span class="cs-arrow">&#9658;</span><span class="cs-lbl">Tools ('+conv.tool_schemas.length+')</span></div>';
+    html += '<div class="conv-section-body">';
+    html += '<div class="conv-tool-list">';
+    conv.tool_schemas.forEach(function(t){ html += '<span class="conv-tool-chip">'+escHtml(t)+'</span>'; });
+    html += '</div></div></div>';
+  }
+
+  // Messages
+  var msgs = conv.messages || [];
+  html += '<div class="conv-section">';
+  html += '<div class="conv-section-hd open" onclick="toggleConvSection(this)">';
+  html += '<span class="cs-arrow">&#9658;</span><span class="cs-lbl">Messages ('+msgs.length+' turns)</span></div>';
+  html += '<div class="conv-section-body open">';
+  html += '<div class="conv-turns">';
+  msgs.forEach(function(msg, i){ html += renderTurn(msg, i); });
+  html += '</div></div></div>';
+
+  return html;
+}
+
+function renderTurn(msg, idx){
+  var role = msg.role || 'unknown';
+  var content = msg.content;
+  var roleClass = role === 'assistant' ? 'role-assistant' : 'role-user';
+
+  // Preview and badge
+  var preview = '', badge = '';
+  if(typeof content === 'string'){
+    preview = content.slice(0, 100).replace(/\n/g, ' ');
+  } else if(Array.isArray(content)){
+    var toolUses = content.filter(function(b){ return b.type==='tool_use'; });
+    var toolResults = content.filter(function(b){ return b.type==='tool_result'; });
+    var texts = content.filter(function(b){ return b.type==='text' && b.text; });
+    if(toolUses.length){
+      badge = toolUses.length+' call'+(toolUses.length>1?'s':'');
+      preview = toolUses.map(function(b){ return '\u2699 '+b.name; }).join('  ');
+    } else if(toolResults.length){
+      badge = toolResults.length+' result'+(toolResults.length>1?'s':'');
+      preview = toolResults.map(function(b){ return '\u21a9 '+b.tool_use_id; }).join('  ');
+    } else if(texts.length){
+      preview = texts[0].text.slice(0,100).replace(/\n/g,' ');
+    }
+  }
+
+  var html = '<div class="conv-turn">';
+  html += '<div class="conv-turn-hd" onclick="toggleConvTurn(this)">';
+  html += '<span class="conv-turn-role '+roleClass+'">'+escHtml(role)+'</span>';
+  html += '<span class="conv-turn-preview">'+escHtml(preview)+'</span>';
+  if(badge) html += '<span class="conv-turn-badge">'+escHtml(badge)+'</span>';
+  html += '<span class="conv-turn-arrow">&#9658;</span>';
+  html += '</div>';
+  html += '<div class="conv-turn-body">';
+  html += renderTurnBody(content);
+  html += '</div>';
+  html += '</div>';
+  return html;
+}
+
+function renderTurnBody(content){
+  if(typeof content === 'string'){
+    return '<div class="turn-text">'+escHtml(content)+'</div>';
+  }
+  if(!Array.isArray(content)) return '';
+  var html = '';
+  content.forEach(function(block){
+    if(block.type === 'text' && block.text){
+      html += '<div class="turn-text">'+escHtml(block.text)+'</div>';
+    } else if(block.type === 'tool_use'){
+      var inp = typeof block.input==='object' ? JSON.stringify(block.input, null, 2) : String(block.input||'');
+      html += '<div class="turn-tool-block">';
+      html += '<div class="turn-tool-name">&#9881; '+escHtml(block.name||'')
+        +'<span style="font-size:9px;color:var(--ink-muted);font-weight:400;margin-left:8px;">id: '+escHtml(block.id||'')+'</span></div>';
+      html += '<div class="turn-tool-input">'+escHtml(inp)+'</div>';
+      html += '</div>';
+    } else if(block.type === 'tool_result'){
+      var resultText = '';
+      if(typeof block.content === 'string') resultText = block.content;
+      else if(Array.isArray(block.content)) resultText = block.content.map(function(c){ return c.text||''; }).join('\n');
+      html += '<div class="turn-tool-block">';
+      html += '<div class="turn-tool-result-name">&#x21a9; tool_result'
+        +'<span style="font-size:9px;font-weight:400;margin-left:8px;">id: '+escHtml(block.tool_use_id||'')+'</span></div>';
+      html += '<div class="turn-tool-result">'+escHtml(resultText)+'</div>';
+      html += '</div>';
+    }
+  });
+  return html || '<span class="muted">(empty)</span>';
 }
 
 function toggleBottomPanel() {

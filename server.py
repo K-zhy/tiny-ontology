@@ -28,7 +28,7 @@ from ontology_engine.graph import get_graph, reload_graph
 # NL 查询模块
 from nl_batch import handle_batch_query
 from nl_graph import handle_graph_query
-from nl_oag import handle_oag_query
+from nl_oag import handle_oag_query, list_conversations, get_conversation
 
 app = FastAPI(title="Ontology Demo", description="学生成绩管理系统 — Ontology 语义层 Demo")
 
@@ -272,6 +272,25 @@ async def api_nl_query_oag(req: dict):
         req.get("query", ""),
         max_iterations=req.get("max_iterations", 20),
     )
+
+
+# ============================================================
+# 对话历史 API
+# ============================================================
+
+@app.get("/ontology/conversations")
+def api_list_conversations(limit: int = 50):
+    """返回最近 N 条 OAG 对话摘要列表"""
+    return {"success": True, "data": list_conversations(limit)}
+
+
+@app.get("/ontology/conversations/{conv_id}")
+def api_get_conversation(conv_id: str):
+    """按 id 返回完整对话记录（含 system_prompt、完整 messages）"""
+    data = get_conversation(conv_id)
+    if data is None:
+        raise HTTPException(status_code=404, detail="conversation not found")
+    return {"success": True, "data": data}
 
 
 # ============================================================

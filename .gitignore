@@ -33,3 +33,6 @@ Thumbs.db
 # 临时文件
 /tmp/
 *.log
+
+# 对话历史
+conversation_logs/
