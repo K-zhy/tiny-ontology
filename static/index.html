@@ -228,6 +228,20 @@ body {
   word-break: break-all; border-top: 1px solid var(--border);
   background: #fdfaf6; font-family: 'JetBrains Mono', monospace;
 }
+.call-result-toggle {
+  padding: 2px 8px; font-size: 9px; color: var(--sage); cursor: pointer;
+  border-top: 1px solid var(--border); background: #f7f4ee; user-select: none;
+  letter-spacing: 0.02em;
+}
+.call-result-toggle:hover { color: var(--accent); }
+.call-result {
+  display: none; padding: 5px 8px; font-size: 10px; color: var(--ink-soft);
+  border-top: 1px solid var(--border); background: #fdfaf6;
+  font-family: 'JetBrains Mono', monospace; white-space: pre-wrap;
+  word-break: break-all; line-height: 1.5; max-height: 160px; overflow-y: auto;
+}
+.call-result.open { display: block; }
+.call-result.is-error { color: #b8402a; }
 
 .round-header .round-tools-badge {
   font-size: 9px; color: var(--sage); background: #f0f4ec;
@@ -905,17 +919,32 @@ function renderOagExploration(log, availableTools){
       +'</div>';
     html += '<div class="round-body open" id="'+roundId+'">';
     if(reasoning) html += '<div class="reasoning-bubble">'+escHtml(reasoning.slice(0,300))+'</div>';
-    steps.forEach(function(step){
+    steps.forEach(function(step, idx){
       var inputStr = typeof step.input==='object' ? JSON.stringify(step.input) : String(step.input||'');
       if(inputStr.length>200) inputStr=inputStr.slice(0,200)+'…';
+      var resultContent = step.result_content || '';
+      var resultError = step.result_error || '';
+      var hasResult = resultContent || resultError;
+      var cardResultId = 'cr-oag-'+roundKey+'-'+idx;
+      var tagColor = step.tool==='infer_relevant_types'?'background:#eef6f0;color:#3a6257;'
+        : step.tool==='describe_object_capabilities'?'background:#eef0fa;color:#5060b0;'
+        : step.tool && step.tool.startsWith('fn_')?'background:#fdf4ee;color:#a05020;'
+        : '';
       html += '<div class="call-card">'
         +'<div class="call-card-header">'
-          +'<span class="step-tag">OAG</span>'
+          +'<span class="step-tag" style="'+tagColor+'">OAG</span>'
           +'<span class="call-name">'+escHtml(step.tool)+'</span>'
           +'<span class="call-summary">'+escHtml(step.summary)+'</span>'
         +'</div>'
-        +'<div class="call-input">'+escHtml(inputStr)+'</div>'
-        +'</div>';
+        +'<div class="call-input">'+escHtml(inputStr)+'</div>';
+      if(hasResult){
+        var isErr = !!resultError;
+        var toggleLabel = isErr ? '⚠ error' : '▶ result';
+        html += '<div class="call-result-toggle" onclick="toggleCallResult(\''+cardResultId+'\')">'+toggleLabel+'</div>'
+          +'<div class="call-result'+(isErr?' is-error':'')+' " id="'+cardResultId+'">'
+          +escHtml((resultError||resultContent).slice(0,600))+'</div>';
+      }
+      html += '</div>';
     });
     html += buildRoundToolsHtml(roundTools, roundId);
     html += '</div></div>';
@@ -982,6 +1011,18 @@ function toggleRound(id){
   body.classList.toggle('open', !open);
   var header = body.previousElementSibling;
   if(header) header.querySelector('.round-arrow').textContent = open ? '▶' : '▼';
+}
+
+function toggleCallResult(id){
+  var el = document.getElementById(id);
+  if(!el) return;
+  var open = el.classList.contains('open');
+  el.classList.toggle('open', !open);
+  var toggle = el.previousElementSibling;
+  if(toggle && toggle.classList.contains('call-result-toggle')){
+    var isErr = el.classList.contains('is-error');
+    toggle.textContent = open ? (isErr ? '⚠ error' : '▶ result') : (isErr ? '⚠ error ▲' : '▼ result ▲');
+  }
 }
 
 function renderToolsPanel(tools){
@@ -1061,9 +1102,13 @@ function renderResults(data){
   el.innerHTML=html||'<span class="muted">Awaiting query&hellip;</span>';
 }
 
+var METADATA_TOOLS = {'infer_relevant_types':1, 'describe_object_capabilities':1};
+
 function deriveExplorationResults(data){
   var steps = (data.exploration_log||[]).concat(data.exploration_path||[]);
   return steps.filter(function(step){
+    var toolName = step.tool || step.tool_name || '';
+    if(METADATA_TOOLS[toolName]) return false;  // 元数据步骤不作为 result 展示
     return step.result_data !== undefined || step.result_content;
   }).map(function(step){
     return {

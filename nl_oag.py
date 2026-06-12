@@ -25,14 +25,6 @@ from llm_client import chat_completion
 TYPE_ALIASES = {
     "学生": "Student", "教师": "Teacher", "课程": "Course", "成绩": "Score", "分数": "Score",
 }
-PROP_ALIASES = {
-    "姓名": "name", "名称": "name", "名字": "name",
-    "年龄": "age", "性别": "gender", "班级": "className",
-    "科目": "subject", "院系": "department", "部门": "department",
-    "学分": "credit",
-    "分数值": "scoreValue", "成绩": "scoreValue",
-    "考试日期": "examDate",
-}
 VALUE_ALIASES = {
     "gender": {
         "男": "M", "男性": "M", "male": "M", "m": "M",
@@ -60,12 +52,11 @@ def normalize_filter_value(prop_name: str, value):
 def normalize_filters(filters: dict) -> dict:
     normalized = {}
     for key, value in filters.items():
-        mapped_key = PROP_ALIASES.get(key, key)
-        if mapped_key == "$or" and isinstance(value, list):
-            normalized[mapped_key] = [normalize_filters(item) if isinstance(item, dict) else item for item in value]
+        if key == "$or" and isinstance(value, list):
+            normalized[key] = [normalize_filters(item) if isinstance(item, dict) else item for item in value]
             continue
-        prop_name = mapped_key.split(".")[-1]
-        normalized[mapped_key] = normalize_filter_value(prop_name, value)
+        prop_name = key.split(".")[-1]
+        normalized[key] = normalize_filter_value(prop_name, value)
     return normalized
 
 
@@ -129,30 +120,6 @@ def infer_relevant_types(query_text: str) -> list[str]:
     return result if result else list(OBJECT_TYPES.keys())
 
 
-# ---- Schema 上下文 ----
-
-def build_llm_context() -> str:
-    """构建给 LLM 的 Schema 上下文（与 nl_batch.py 同内容，供 OAG system prompt 使用）"""
-    lines = ["## Object Types"]
-    for name, o in OBJECT_TYPES.items():
-        props = ", ".join(f"{p.name}({p.data_type})" for p in o.properties)
-        lines.append(f"- {name}({o.display_name}): {props}")
-    lines.append("\n## Link Types")
-    for name, l in LINK_TYPES.items():
-        lines.append(f"- {name}: {l.source_type} → {l.target_type} ({l.display_name}), 反向: {l.reverse_name}")
-    lines.append("\n## Functions")
-    for name, f in FUNCTIONS.items():
-        params = ", ".join(f"{p.name}:{p.param_type}" for p in f.params)
-        lines.append(f"- {name}({f.bound_object}.{f.display_name}): ({params}) → {f.return_type}")
-    lines.append("\n## Interfaces (跨对象抽象契约)")
-    for name, i in INTERFACES.items():
-        lines.append(f"- {name}({i.display_name}): {i.description}, 实现者: {', '.join(i.implementors)}, 共享Function: {', '.join(i.shared_functions)}")
-    lines.append("\n## Actions")
-    for name, a in ACTION_TYPES.items():
-        params = ", ".join(f"{p.name}:{p.param_type}" for p in a.params)
-        lines.append(f"- {name}({a.display_name}): ({params})")
-    return "\n".join(lines)
-
 
 # ---- 工具 Schema 构建 ----
 
@@ -191,18 +158,211 @@ def build_object_bound_tool_schemas(relevant_types: list[str]) -> list[dict]:
     return tools
 
 
-def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
-    if relevant_types is None:
-        relevant_types = list(OBJECT_TYPES.keys())
-    return [
+def get_relevant_object_sets(object_types: list[str]) -> dict[str, list]:
+    """返回当前对象类型上定义的 ObjectSet，避免把无关集合暴露给上下文。"""
+    normalized_types = []
+    for type_name in object_types:
+        mapped = TYPE_ALIASES.get(type_name, type_name)
+        if mapped in OBJECT_TYPES and mapped not in normalized_types:
+            normalized_types.append(mapped)
+
+    relevant_sets: dict[str, list] = {type_name: [] for type_name in normalized_types}
+    for obj_set in OBJECT_SETS.values():
+        if obj_set.object_type in relevant_sets:
+            relevant_sets[obj_set.object_type].append(obj_set)
+    return relevant_sets
+
+
+def build_object_capability_data(object_types: list[str]) -> dict:
+    """构建当前推断对象的属性、Link、ObjectSet、函数能力描述。"""
+    normalized_types = []
+    for type_name in object_types:
+        mapped = TYPE_ALIASES.get(type_name, type_name)
+        if mapped in OBJECT_TYPES and mapped not in normalized_types:
+            normalized_types.append(mapped)
+    relevant_object_sets = get_relevant_object_sets(normalized_types)
+
+    object_caps = []
+    for type_name in normalized_types:
+        obj_def = OBJECT_TYPES[type_name]
+        properties = [
+            {
+                "name": p.name,
+                "dataType": p.data_type,
+                "kind": p.prop_type,
+            }
+            for p in obj_def.properties
+        ]
+
+        links = []
+        for link in LINK_TYPES.values():
+            if link.source_type == type_name:
+                links.append({
+                    "path": link.target_type.lower(),
+                    "direction": "forward",
+                    "targetType": link.target_type,
+                    "display": link.display_name,
+                })
+            if link.target_type == type_name:
+                links.append({
+                    "path": link.reverse_name,
+                    "direction": "reverse",
+                    "targetType": link.source_type,
+                    "display": f"反向{link.display_name}",
+                })
+
+        object_sets = [
+            {
+                "name": obj_set.api_name,
+                "display": obj_set.display_name,
+                "description": obj_set.description,
+            }
+            for obj_set in relevant_object_sets.get(type_name, [])
+        ]
+
+        seen_functions = set()
+        functions = []
+        for func_name, func_def in FUNCTIONS.items():
+            if func_def.func_type == "validation":
+                continue
+            applies = False
+            if func_def.bound_object == type_name:
+                applies = True
+            elif func_def.bound_object in INTERFACES and type_name in INTERFACES[func_def.bound_object].implementors:
+                applies = True
+            if not applies or func_name in seen_functions:
+                continue
+            seen_functions.add(func_name)
+            functions.append({
+                "tool": f"fn_{func_name}",
+                "display": func_def.display_name,
+                "returnType": func_def.return_type,
+                "params": [
+                    {
+                        "name": param.name,
+                        "type": param.param_type,
+                        "required": param.required,
+                    }
+                    for param in func_def.params
+                ],
+            })
+
+        object_caps.append({
+            "type": type_name,
+            "display": obj_def.display_name,
+            "properties": properties,
+            "links": links,
+            "objectSets": object_sets,
+            "functions": functions,
+        })
+
+    system_tools = [
         {
-            "name": "list_object_types",
-            "description": "列出系统中所有可用的对象类型、ObjectSet、属性、Link 关系、绑定函数。",
-            "input_schema": {"type": "object", "properties": {}, "required": []},
+            "name": "infer_relevant_types",
+            "purpose": "推断当前问题涉及哪些对象类型",
+        },
+        {
+            "name": "describe_object_capabilities",
+            "purpose": "列出当前对象的属性、Link、ObjectSet 和绑定函数",
         },
         {
             "name": "query_objects",
-            "description": "在类型层面查询对象，支持跨 Link 点号过滤和多种运算符。结果自动含派生属性（avgScore、passRate）。对 Score 结果会补充 studentName 和 courseName。",
+            "purpose": "按对象属性和跨 Link 路径查询对象",
+        },
+        {
+            "name": "get_object_detail",
+            "purpose": "根据对象主键获取单个对象详情",
+        },
+        {
+            "name": "aggregate_objects",
+            "purpose": "按对象属性或跨 Link 路径做分组聚合",
+        },
+        {
+            "name": "exclude_objects",
+            "purpose": "执行不存在类排除查询（NOT EXISTS）",
+        },
+        {
+            "name": "execute_action",
+            "purpose": "执行写操作 Action",
+        },
+    ]
+    if any(relevant_object_sets.values()):
+        system_tools.insert(3, {
+            "name": "query_object_set",
+            "purpose": "查询当前对象相关的预定义语义集合",
+        })
+
+    lines = ["## 当前对象能力"]
+    for item in object_caps:
+        lines.append(f"- {item['type']}({item['display']})")
+        prop_parts = []
+        for prop in item["properties"]:
+            suffix = "[pk]" if prop["kind"] == "primary_key" else ("[derived]" if prop["kind"] == "derived" else "")
+            prop_parts.append(f"{prop['name']}({prop['dataType']}){suffix}")
+        lines.append("  属性: " + ("、".join(prop_parts) if prop_parts else "无"))
+        link_parts = [f"{link['path']} -> {link['targetType']}({link['display']})" for link in item["links"]]
+        lines.append("  Link: " + ("、".join(link_parts) if link_parts else "无"))
+        set_parts = [f"{obj_set['name']}({obj_set['display']})" for obj_set in item["objectSets"]]
+        lines.append("  ObjectSet: " + ("、".join(set_parts) if set_parts else "无"))
+        function_parts = []
+        for fn in item["functions"]:
+            params_str = ", ".join(
+                f"{param['name']}:{param['type']}" + ("" if param["required"] else "?")
+                for param in fn["params"]
+            )
+            function_parts.append(f"{fn['tool']}({params_str})")
+        lines.append("  对象工具: " + ("、".join(function_parts) if function_parts else "无"))
+
+    lines.append("## 当前系统工具")
+    for tool in system_tools:
+        lines.append(f"- {tool['name']}: {tool['purpose']}")
+
+    return {
+        "object_types": object_caps,
+        "system_tools": system_tools,
+        "summary_text": "\n".join(lines),
+    }
+
+
+def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
+    if relevant_types is None:
+        relevant_types = list(OBJECT_TYPES.keys())
+    relevant_object_sets = get_relevant_object_sets(relevant_types)
+    relevant_object_set_names = [
+        obj_set.api_name
+        for type_name in relevant_types
+        for obj_set in relevant_object_sets.get(type_name, [])
+    ]
+    schemas = [
+        {
+            "name": "infer_relevant_types",
+            "description": "推断当前用户问题涉及哪些对象类型。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "用户原始问题"},
+                },
+                "required": ["query"],
+            },
+        },
+        {
+            "name": "describe_object_capabilities",
+            "description": "列出当前对象的业务属性、可用 Link 路径、ObjectSet 和对象绑定函数。后续系统工具的字段都必须使用这里返回的业务属性名。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "object_types": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": relevant_types},
+                        "description": "当前问题涉及的对象类型列表",
+                    },
+                },
+                "required": ["object_types"],
+            },
+        },
+        {
+            "name": "query_objects",
+            "description": "在类型层面查询对象。filters、order_by 中涉及的字段必须使用 describe_object_capabilities 返回的对象属性名或 Link 路径。结果自动含派生属性（avgScore、passRate）。对 Score 结果会补充 studentName、courseName 和 teacherName。",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -214,13 +374,13 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
                     "filters": {
                         "type": "object",
                         "description": (
-                            "过滤条件，支持以下格式（可混用）：\n"
+                            "过滤条件，字段必须使用对象业务属性名（如 name、className、scoreValue）或合法跨 Link 路径（如 student.name、course.name）。支持以下格式（可混用）：\n"
                             "- 等值: {\"name\": \"张三\"}\n"
                             "- 运算符: {\"scoreValue\": {\"op\": \"gte\", \"value\": 85}}\n"
                             "  可用 op: eq ne gt gte lt lte like between in not_in is_null is_not_null\n"
                             "- between: {\"scoreValue\": {\"op\": \"between\", \"value\": [80, 90]}}\n"
                             "- in: {\"name\": {\"op\": \"in\", \"value\": [\"张三\", \"李四\"]}}\n"
-                            "- 跨 Link: {\"student.name\": \"张三\", \"course.name\": \"数学\"}\n"
+                            "- 跨 Link: {\"student.name\": \"张三\", \"course.name\": \"高等数学\"}\n"
                             "- 跨 Link 运算符: {\"score.scoreValue\": {\"op\": \"gt\", \"value\": 60}}\n"
                             "- OR: {\"$or\": [{\"name\": \"张三\"}, {\"className\": \"理学院\"}]}"
                         ),
@@ -234,25 +394,6 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
                     "order_dir": {"type": "string", "enum": ["asc", "desc"], "description": "排序方向"},
                 },
                 "required": ["object_type"],
-            },
-        },
-        {
-            "name": "query_object_set",
-            "description": "查询预定义的 ObjectSet（具名对象集合）。可用: " + "、".join(
-                f"{s.api_name}({s.display_name})" for s in OBJECT_SETS.values()
-            ) + "。",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "set_name": {
-                        "type": "string",
-                        "enum": list(OBJECT_SETS.keys()),
-                        "description": "ObjectSet 名称",
-                    },
-                    "filters": {"type": "object", "description": "在集合结果上额外过滤"},
-                    "limit": {"type": "integer"},
-                },
-                "required": ["set_name"],
             },
         },
         {
@@ -387,64 +528,47 @@ def build_tool_schemas(relevant_types: list[str] | None = None) -> list[dict]:
             },
         },
     ]
+    if relevant_object_set_names:
+        schemas.insert(3, {
+            "name": "query_object_set",
+            "description": "查询预定义的 ObjectSet（具名对象集合）。可用: " + "、".join(
+                f"{OBJECT_SETS[name].api_name}({OBJECT_SETS[name].display_name})" for name in relevant_object_set_names
+            ) + "。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "set_name": {
+                        "type": "string",
+                        "enum": relevant_object_set_names,
+                        "description": "ObjectSet 名称",
+                    },
+                    "filters": {"type": "object", "description": "在集合结果上额外过滤"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["set_name"],
+            },
+        })
+    return schemas
 
 
 def build_system_prompt(relevant_types: list[str] | None = None) -> str:
     if relevant_types is None:
         relevant_types = list(OBJECT_TYPES.keys())
-    schema = build_llm_context()
 
-    # 生成本次可用的对象绑定函数描述
-    relevant_set = set(relevant_types)
-    fn_lines = []
-    for func_name, func_def in FUNCTIONS.items():
-        if func_def.func_type == "validation":
-            continue
-        if func_def.bound_object in relevant_set:
-            type_label = func_def.bound_object
-        elif func_def.bound_object in INTERFACES:
-            iface = INTERFACES[func_def.bound_object]
-            applicable = [t for t in iface.implementors if t in relevant_set]
-            if not applicable:
-                continue
-            type_label = "、".join(applicable)
-        else:
-            continue
-        params_str = ", ".join(f"{p.name}:{p.param_type}" + ("" if p.required else "?") for p in func_def.params)
-        fn_lines.append(f"- fn_{func_name}({params_str}) → [{type_label}] {func_def.display_name}")
+    return """你是一个 Ontology 对象查询助手。系统采用“对象推断 -> 对象能力发现 -> 查询执行”的流程。
 
-    types_str = "、".join(relevant_types)
-    fn_section = "\n".join(fn_lines) if fn_lines else "（无）"
-    object_sets_section = "\n".join(
-        f"- **{s.api_name}**({s.display_name}): {s.description}"
-        for s in OBJECT_SETS.values()
-    )
+## 工作流程
+1. 如果需要确认问题涉及哪些对象，先调用 infer_relevant_types。
+2. 在使用任何字段前，优先依据当前上下文中的对象能力信息；如果仍不确定，再调用 describe_object_capabilities。
+3. 完成对象能力确认后，再调用 query_objects、query_object_set、get_object_detail、aggregate_objects、exclude_objects 或 execute_action。
+4. 对象绑定函数通过 fn_* 工具直接调用，只对当前问题涉及的对象开放。
 
-    return f"""你是一个 Ontology 对象查询助手。系统使用 Ontology Augmented Generation（OAG）模式：所有数据建模为业务对象（Student、Course、Score、Teacher），Ontology 提供 Data（对象+Link）、Logic（函数）、Action（写操作）三类能力来增强你的回答。
-
-## 本次查询推断的对象类型
-{types_str}
-
-## 本次可用的对象绑定函数
-{fn_section}
-
-## 核心原则
-1. 你通过 **query_objects** 在类型层面声明查询意图，用属性过滤条件返回结果。不要遍历实例图。
-2. 对象属性支持**跨 Link 点号过滤**（如 filters={{"student.name":"张三","course.name":"数学"}}），系统自动处理跨表 JOIN。
-3. 过滤条件支持**多种运算符**，value 可以是标量（等值）或 {{"op":"运算符","value":值}} 格式：
-   - 比较: gt / gte / lt / lte / ne（大于/大于等于/小于/小于等于/不等于）
-   - 范围: between（需 value=[下限,上限]）
-   - 集合: in / not_in（需 value=[...]）
-   - 空值: is_null / is_not_null（无需 value）
-   - 模糊: like（value 中直接写 %...%）
-4. 支持 **$or 条件**：filters={{"$or":[{{"name":"张三"}},{{"className":"理学院"}}]}}，括号内支持运算符。
-5. **order_by 支持点号跨 Link**，如 order_by="course.name" 按关联课程名排序。
-6. 查询结果**自动包含派生属性**（avgScore、passRate）。Score 查询结果**自动附带 studentName、courseName、teacherName**。
-7. 预定义的 ObjectSet 通过 **query_object_set** 引用，如 TopStudents、PassedCourses。
-8. **对象绑定函数通过 `fn_{{funcName}}` 工具直接调用**（如 fn_getAvgScore、fn_getPassRate），无需经过 call_function 包装。需要先用 query_objects 拿到对象 id，再传给函数。
-9. 获取足够信息后立即用中文简短回答，不要暴露内部 ID 给用户。
-10. **再次强调：Score 结果已经包含 studentName、courseName、teacherName，你不需要再单独查 Student 或 Course 表！**
-11. **Student.gender 在底层数据中使用 `M`/`F` 编码；当用户说“男/女”时，你应分别按 `M`/`F` 过滤。**
+## 核心约束
+1. 系统工具中的业务字段必须使用对象属性名，不要使用数据库列名，也不要使用中文属性别名。
+2. 跨 Link 查询只使用对象能力信息中列出的 path token，例如 student.name、course.name、scores.scoreValue。
+3. Score 查询结果会自动补充 studentName、courseName、teacherName，不要再重复查询 Student 或 Course 只为拿名称。
+4. get_object_detail 需要对象主键；如果只有对象名称，先用 query_objects 找到对象，再取主键。
+5. 如果字段或路径不确定，先重新查看当前对象能力，不要猜测不存在的属性。
 
 ## 输出要求
 - 严格按以下格式输出：第一行 `结论：...`，第二行 `分析：...`
@@ -453,46 +577,14 @@ def build_system_prompt(relevant_types: list[str] | None = None) -> str:
 - `分析` 只保留最关键的 1 到 2 个依据，简短说明即可
 - 如果结果并列，直接在 `结论` 中点名并列对象；如果没找到，直接写没找到
 
-## Schema
-
-{schema}
-
-## ObjectSets（预定义集合）
-{object_sets_section}
-
-## 常用查询模式
-- "张三的数学成绩" → query_objects(type="Score", filters={{"student.name": "张三", "course.name": "数学"}})
-- "优秀学生有哪些" → query_object_set(set_name="TopStudents")
-- "张三的平均分" → query_objects(type="Student", filters={{"name": "张三"}})，结果含 avgScore
-- "谁的成绩最差" → query_objects(type="Score", order_by="scoreValue", order_dir="asc", limit=1)
-- "高等数学谁最高分" → query_objects(type="Score", filters={{"course.name": "高等数学"}}, order_by="scoreValue", order_dir="desc", limit=1)
-- "有哪些类型的对象" → list_object_types
-- "成绩在80到90之间的" → query_objects(type="Score", filters={{"scoreValue": {{"op":"between","value":[80,90]}}}})
-- "成绩大于85分的学生" → query_objects(type="Score", filters={{"scoreValue": {{"op":"gt","value":85}}}})
-- "高等数学低于80分的学生" → query_objects(type="Score", filters={{"course.name":"高等数学","scoreValue":{{"op":"lt","value":80}}}})
-- "数据结构不及格（<60）的" → query_objects(type="Score", filters={{"course.name":"数据结构","scoreValue":{{"op":"lt","value":60}}}})
-- "高等数学低于80 **或** 数据结构低于80" → 分两次 query_objects 分别查，合并 studentName 列表（$or 不支持跨 Link 条件，须拆开查）
-- "张三或李四的成绩" → query_objects(type="Score", filters={{"student.name": {{"op":"in","value":["张三","李四"]}}}})
-- "还没有老师的课程" → exclude_objects(object_type="Course", exclude_link="taughtBy", exclude_target_type="Teacher")
-- "按课程名排序所有成绩" → query_objects(type="Score", order_by="course.name")
-- "有哪些女学生" → query_objects(type="Student", filters={{"gender": "F"}})
-- "哪些学生没有选修过李教授的课" → exclude_objects(object_type="Student", exclude_link="earnedBy", exclude_target_type="Score", exclude_target_filters={{"course.teacher.name":"李教授"}})
-- "哪些课程没被英语2201学生修读" → exclude_objects(object_type="Course", exclude_link="forCourse", exclude_target_type="Score", exclude_target_filters={{"student.className":"英语2201"}})
-- "每门课选课人数大于3的" → aggregate_objects(type="Score", aggregations=[{{"type":"count","name":"cnt"}}], group_by=["course.name"], having={{"cnt":{{"op":"gt","value":3}}}})
-
 ## 规则
-- **Score 结果已经包含 studentName、courseName、teacherName，不要再单独查 Student/Course！**
-- "低于/小于/不超过 N" 必须用 {{"op":"lt","value":N}} 或 {{"op":"lte","value":N}}，**禁止用等值 N 代替**
-- "高于/大于/超过 N" 必须用 {{"op":"gt","value":N}} 或 {{"op":"gte","value":N}}
-- **"超过X"=严格大于(gt)，"不低于X"=大于等于(gte)，"达到X"=大于等于(gte)** — 注意区分边界
-- 找最好/最差/最高/最低时用 order_by + order_dir + limit=1
-- **跨不同 Link 路径的 OR（如 高等数学低于80 OR 数据结构低于80）须拆成两次 query_objects，合并结果**
-- $or 仅支持同一对象的直接属性条件，不支持跨 Link
-- **否定查询（"没有"、"不存在"、"未修读"）务必使用 exclude_objects 工具**，不要尝试手动做集合差
-- **模糊匹配提示**：当用户口语表达可能与数据库精确值不同时（如"英语2201班" vs "英语2201"），使用 fuzzy=true 或 like 操作符（{{"op":"like","value":"%英语2201%"}}）
-- 知道某属性值但不知道具体类型时，先查对应类型，再用跨 Link 过滤
-- 找不到就说没找到，不编造数据
-- 跨 Link 过滤优先用点号语法，而非多步查询"""
+- “低于/小于/不超过 N” 用 {"op":"lt","value":N} 或 {"op":"lte","value":N}
+- “高于/大于/超过 N” 用 {"op":"gt","value":N} 或 {"op":"gte","value":N}
+- “超过X”=严格大于(gt)；“不低于X”=大于等于(gte)；“达到X”=大于等于(gte)
+- 找最好/最差/最高/最低时优先使用 order_by + order_dir + limit=1
+- $or 仅用于同一对象的直接属性条件；跨不同 Link 路径的 OR 需要拆成多次 query_objects
+- 否定查询（没有 / 不存在 / 未修读）优先用 exclude_objects
+- 找不到就说没找到，不编造数据"""
 
 
 # ---- Score 上下文富化 ----
@@ -557,17 +649,24 @@ def enrich_score_context(results: list[dict]):
 def execute_tool(tool_name: str, inp: dict) -> dict:
     """执行 OAG 工具，返回 {content, summary}。"""
     try:
-        if tool_name == "list_object_types":
-            types_info = []
-            for type_name, obj_def in OBJECT_TYPES.items():
-                props = [{"name": p.name, "type": p.prop_type, "dataType": p.data_type} for p in obj_def.properties]
-                out_links = [{"name": l.api_name, "target": l.target_type, "display": l.display_name} for l in LINK_TYPES.values() if l.source_type == type_name]
-                in_links = [{"name": l.reverse_name, "target": l.source_type, "display": f"反向{l.display_name}"} for l in LINK_TYPES.values() if l.target_type == type_name]
-                bound_funcs = [f.api_name for f in FUNCTIONS.values() if f.bound_object == type_name]
-                types_info.append({"type": type_name, "display": obj_def.display_name, "properties": props, "links": out_links + in_links, "functions": bound_funcs})
-            set_info = [{"name": s.api_name, "display": s.display_name, "type": s.object_type, "description": s.description} for s in OBJECT_SETS.values()]
-            content = json.dumps({"object_types": types_info, "object_sets": set_info}, ensure_ascii=False)
-            return {"content": content, "summary": f"listed {len(types_info)} types, {len(set_info)} sets", "data": {"object_types": types_info, "object_sets": set_info}}
+        if tool_name == "infer_relevant_types":
+            query_text = inp.get("query", "")
+            relevant_types = infer_relevant_types(query_text)
+            content = "推断相关对象类型：" + "、".join(relevant_types)
+            return {
+                "content": content,
+                "summary": f"relevant types: {', '.join(relevant_types)}",
+                "data": {"relevant_types": relevant_types},
+            }
+
+        if tool_name == "describe_object_capabilities":
+            object_types = inp.get("object_types", []) or list(OBJECT_TYPES.keys())
+            capability = build_object_capability_data(object_types)
+            return {
+                "content": capability["summary_text"],
+                "summary": f"described {len(capability['object_types'])} object types",
+                "data": capability,
+            }
 
         elif tool_name == "query_objects":
             obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
@@ -721,15 +820,41 @@ def execute_tool(tool_name: str, inp: dict) -> dict:
 
 async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
     """OAG 模式：LLM 在对象类型层操作，引擎负责 Link JOIN 编译。"""
-    relevant_types = infer_relevant_types(query_text)
+    infer_result = execute_tool("infer_relevant_types", {"query": query_text})
+    relevant_types = infer_result.get("data", {}).get("relevant_types", [])
+    capability_result = execute_tool("describe_object_capabilities", {"object_types": relevant_types})
+
     system_prompt = build_system_prompt(relevant_types)
     tool_schemas = build_tool_schemas(relevant_types) + build_object_bound_tool_schemas(relevant_types)
 
     # 可用工具摘要（供前端展示）
     available_tools = [{"name": t["name"], "description": t["description"]} for t in tool_schemas]
 
-    messages = [{"role": "user", "content": query_text}]
-    exploration_log = [{"step": 0, "tool": "type_inference", "input": {"query": query_text}, "summary": f"推断相关对象类型: {', '.join(relevant_types)}"}]
+    bootstrap_context = (
+        "系统已完成对象推断和对象能力发现。后续只能使用当前对象能力中列出的业务字段、Link 路径和工具。\n\n"
+        + capability_result.get("content", "")
+        + f"\n\n用户问题：{query_text}"
+    )
+
+    messages = [{"role": "user", "content": bootstrap_context}]
+    exploration_log = [
+        {
+            "step": 0,
+            "tool": "infer_relevant_types",
+            "input": {"query": query_text},
+            "summary": infer_result["summary"],
+            "result_data": infer_result.get("data"),
+            "result_content": infer_result.get("content"),
+        },
+        {
+            "step": 0,
+            "tool": "describe_object_capabilities",
+            "input": {"object_types": relevant_types},
+            "summary": capability_result["summary"],
+            "result_data": capability_result.get("data"),
+            "result_content": capability_result.get("content"),
+        },
+    ]
     final_answer = None
 
     for iteration in range(max_iterations):
@@ -787,3 +912,11 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
     final_answer = format_final_answer(final_answer)
 
     return {"success": True, "answer": final_answer, "exploration_log": exploration_log, "available_tools": available_tools}
+
+
+
+
+if __name__ == "__main__":
+    import asyncio
+    result = asyncio.run(handle_oag_query("王教授教授哪些课程？"))
+    print(result["answer"])
