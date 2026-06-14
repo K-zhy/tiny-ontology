@@ -8,6 +8,7 @@ register_all_system_tools(registry) 按原有顺序注册全部系统工具。
 """
 from __future__ import annotations
 import json
+from typing import TYPE_CHECKING
 
 from ontology_engine.registry import OBJECT_TYPES, ACTION_TYPES, OBJECT_SETS
 from ontology_engine.query import (
@@ -18,9 +19,10 @@ from ontology_engine.action import execute_action as _engine_execute_action
 from ontology_engine.graph import reload_graph
 
 from .capabilities import infer_relevant_types, build_object_capability_data, get_relevant_object_sets
-from .utils import TYPE_ALIASES, normalize_filters, enrich_score_context
+from .config import OntologyConfig, DEFAULT_CONFIG
+from .utils import normalize_filters
 
-if TYPE_CHECKING := False:
+if TYPE_CHECKING:
     from .tool_registry import ToolRegistry
 
 
@@ -28,14 +30,21 @@ if TYPE_CHECKING := False:
 # 工具 1: infer_relevant_types
 # ============================================================
 
-def _handle_infer_relevant_types(inp: dict) -> dict:
-    query_text = inp.get("query", "")
-    types = infer_relevant_types(query_text)
-    return {
-        "content": "推断相关对象类型：" + "、".join(types),
-        "summary": f"relevant types: {', '.join(types)}",
-        "data": {"relevant_types": types},
-    }
+def _make_infer_relevant_types(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        query_text = inp.get("query", "")
+        types = infer_relevant_types(
+            query_text,
+            type_aliases=config.type_aliases or None,
+            extra_type_keywords=config.extra_type_keywords or None,
+            type_expansion_rules=config.type_expansion_rules or None,
+        )
+        return {
+            "content": "推断相关对象类型：" + "、".join(types),
+            "summary": f"relevant types: {', '.join(types)}",
+            "data": {"relevant_types": types},
+        }
+    return handler
 
 
 def _schema_infer_relevant_types(relevant_types: list[str]) -> dict:  # noqa: ARG001
@@ -54,14 +63,16 @@ def _schema_infer_relevant_types(relevant_types: list[str]) -> dict:  # noqa: AR
 # 工具 2: describe_object_capabilities
 # ============================================================
 
-def _handle_describe_object_capabilities(inp: dict) -> dict:
-    object_types = inp.get("object_types", []) or list(OBJECT_TYPES.keys())
-    capability = build_object_capability_data(object_types)
-    return {
-        "content": capability["summary_text"],
-        "summary": f"described {len(capability['object_types'])} object types",
-        "data": capability,
-    }
+def _make_describe_object_capabilities(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        object_types = inp.get("object_types", []) or list(OBJECT_TYPES.keys())
+        capability = build_object_capability_data(object_types, type_aliases=config.type_aliases or None)
+        return {
+            "content": capability["summary_text"],
+            "summary": f"described {len(capability['object_types'])} object types",
+            "data": capability,
+        }
+    return handler
 
 
 def _schema_describe_object_capabilities(relevant_types: list[str]) -> dict:
@@ -86,32 +97,36 @@ def _schema_describe_object_capabilities(relevant_types: list[str]) -> dict:
 # 工具 3: query_objects
 # ============================================================
 
-def _handle_query_objects(inp: dict) -> dict:
-    obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
-    filters = inp.get("filters", {})
-    if filters:
-        filters = normalize_filters(filters)
-    fuzzy = inp.get("fuzzy", False)
-    limit = min(inp.get("limit", 20), 100)
-    order_by = inp.get("order_by")
-    order_dir = inp.get("order_dir", "asc")
+def _make_query_objects(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        raw_type = inp.get("object_type", "")
+        obj_type = (config.type_aliases or {}).get(raw_type, raw_type)
+        filters = inp.get("filters", {})
+        if filters:
+            filters = normalize_filters(filters, config.value_aliases or None)
+        fuzzy = inp.get("fuzzy", False)
+        limit = min(inp.get("limit", 20), 100)
+        order_by = inp.get("order_by")
+        order_dir = inp.get("order_dir", "asc")
 
-    results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy, limit=limit,
-                               order_by=order_by, order_dir=order_dir)
-    if not results:
-        return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}", "data": []}
+        results = query_objects_v2(obj_type, filters=filters, fuzzy=fuzzy, limit=limit,
+                                   order_by=order_by, order_dir=order_dir)
+        if not results:
+            return {"content": f"未找到匹配的 {obj_type} 对象", "summary": f"empty {obj_type}", "data": []}
 
-    enrich_score_context(results)
-    lines = [f"找到 {len(results)} 个 {obj_type} 对象："]
-    for obj in results[:15]:
-        obj_name = obj.get("name", "")
-        parts = [f"{k}={v}" for k, v in obj.items() if not k.startswith("_") and k != "name"]
-        obj_key = obj.get("_id") or obj.get("Sno") or obj.get("Tno") or obj.get("Cno") or obj.get("id", "?")
-        label = obj_name if obj_name else f"{obj_type}#{obj_key}"
-        lines.append(f"  {obj_type}#{obj_key} '{label}': {', '.join(parts[:8])}")
-    if len(results) > 15:
-        lines.append(f"  ...及其他 {len(results) - 15} 个结果")
-    return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}", "data": results}
+        if config.result_enricher:
+            config.result_enricher(results)
+        lines = [f"找到 {len(results)} 个 {obj_type} 对象："]
+        for obj in results[:15]:
+            obj_name = obj.get("name", "")
+            parts = [f"{k}={v}" for k, v in obj.items() if not k.startswith("_") and k != "name"]
+            obj_key = obj.get("_id") or obj.get("Sno") or obj.get("Tno") or obj.get("Cno") or obj.get("id", "?")
+            label = obj_name if obj_name else f"{obj_type}#{obj_key}"
+            lines.append(f"  {obj_type}#{obj_key} '{label}': {', '.join(parts[:8])}")
+        if len(results) > 15:
+            lines.append(f"  ...及其他 {len(results) - 15} 个结果")
+        return {"content": "\n".join(lines), "summary": f"found {len(results)} {obj_type}", "data": results}
+    return handler
 
 
 def _schema_query_objects(relevant_types: list[str]) -> dict:
@@ -120,7 +135,7 @@ def _schema_query_objects(relevant_types: list[str]) -> dict:
         "description": (
             "在类型层面查询对象。filters、order_by 中涉及的字段必须使用 describe_object_capabilities 返回的"
             "对象属性名或 Link 路径。结果自动含派生属性（avgScore、passRate）。"
-            "对 Score 结果会补充 studentName、courseName 和 teacherName。"
+            "对 Score 结果会补充 studentName、courseName 和 teacherName；对 TeachingAssignment 结果会补充 courseName 和 teacherName。"
         ),
         "input_schema": {
             "type": "object",
@@ -204,18 +219,21 @@ def _schema_query_object_set(relevant_types: list[str]) -> dict | None:
 # 工具 5: get_object_detail
 # ============================================================
 
-def _handle_get_object_detail(inp: dict) -> dict:
-    obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
-    obj_id = inp.get("object_id", "")
-    obj = get_object(obj_type, obj_id)
-    if obj is None:
-        return {"content": f"{obj_type} object_id={obj_id} 不存在", "summary": "not found", "error": "not found"}
-    fill_derived_batch([obj], obj_type)
-    lines = [f"{obj_type}#{obj_id} '{obj.get('name', '')}'"]
-    for k, v in obj.items():
-        if not k.startswith("_"):
-            lines.append(f"  {k}: {v}")
-    return {"content": "\n".join(lines), "summary": f"detail {obj_type}#{obj_id}", "data": obj}
+def _make_get_object_detail(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        raw_type = inp.get("object_type", "")
+        obj_type = (config.type_aliases or {}).get(raw_type, raw_type)
+        obj_id = inp.get("object_id", "")
+        obj = get_object(obj_type, obj_id)
+        if obj is None:
+            return {"content": f"{obj_type} object_id={obj_id} 不存在", "summary": "not found", "error": "not found"}
+        fill_derived_batch([obj], obj_type)
+        lines = [f"{obj_type}#{obj_id} '{obj.get('name', '')}'"]
+        for k, v in obj.items():
+            if not k.startswith("_"):
+                lines.append(f"  {k}: {v}")
+        return {"content": "\n".join(lines), "summary": f"detail {obj_type}#{obj_id}", "data": obj}
+    return handler
 
 
 def _schema_get_object_detail(relevant_types: list[str]) -> dict:
@@ -237,18 +255,20 @@ def _schema_get_object_detail(relevant_types: list[str]) -> dict:
 # 工具 6: execute_action
 # ============================================================
 
-def _handle_execute_action(inp: dict) -> dict:
-    action_name = inp.get("action_name", "")
-    params = inp.get("params", {})
-    result = _engine_execute_action(action_name, params)
-    if result.get("success"):
-        reload_graph()
-    return {
-        "content": json.dumps(result, ensure_ascii=False),
-        "summary": f"executed {action_name}",
-        "data": result,
-        "error": result.get("error"),
-    }
+def _make_execute_action(config: OntologyConfig):  # noqa: ARG001
+    def handler(inp: dict) -> dict:
+        action_name = inp.get("action_name", "")
+        params = inp.get("params", {})
+        result = _engine_execute_action(action_name, params)
+        if result.get("success"):
+            reload_graph()
+        return {
+            "content": json.dumps(result, ensure_ascii=False),
+            "summary": f"executed {action_name}",
+            "data": result,
+            "error": result.get("error"),
+        }
+    return handler
 
 
 def _schema_execute_action(relevant_types: list[str]) -> dict:  # noqa: ARG001
@@ -270,33 +290,36 @@ def _schema_execute_action(relevant_types: list[str]) -> dict:  # noqa: ARG001
 # 工具 7: aggregate_objects
 # ============================================================
 
-def _handle_aggregate_objects(inp: dict) -> dict:
-    obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
-    aggregations = inp.get("aggregations", [])
-    filters = inp.get("filters", {})
-    if filters:
-        filters = normalize_filters(filters)
-    group_by = inp.get("group_by")
-    having = inp.get("having")
-    order_by = inp.get("order_by")
-    order_dir = inp.get("order_dir", "desc")
-    limit = min(inp.get("limit", 50), 200)
+def _make_aggregate_objects(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        raw_type = inp.get("object_type", "")
+        obj_type = (config.type_aliases or {}).get(raw_type, raw_type)
+        aggregations = inp.get("aggregations", [])
+        filters = inp.get("filters", {})
+        if filters:
+            filters = normalize_filters(filters, config.value_aliases or None)
+        group_by = inp.get("group_by")
+        having = inp.get("having")
+        order_by = inp.get("order_by")
+        order_dir = inp.get("order_dir", "desc")
+        limit = min(inp.get("limit", 50), 200)
 
-    result = aggregate_objects(
-        obj_type, aggregations=aggregations, filters=filters,
-        group_by=group_by, having=having,
-        order_by=order_by, order_dir=order_dir, limit=limit,
-    )
-    if not result.get("success"):
-        return {"content": f"聚合错误: {result.get('error')}", "summary": "agg error", "error": result.get("error")}
+        result = aggregate_objects(
+            obj_type, aggregations=aggregations, filters=filters,
+            group_by=group_by, having=having,
+            order_by=order_by, order_dir=order_dir, limit=limit,
+        )
+        if not result.get("success"):
+            return {"content": f"聚合错误: {result.get('error')}", "summary": "agg error", "error": result.get("error")}
 
-    data = result["data"]
-    lines = [f"聚合结果（{len(data)} 行）："]
-    for row in data[:20]:
-        lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
-    if len(data) > 20:
-        lines.append(f"  ...及其他 {len(data) - 20} 行")
-    return {"content": "\n".join(lines), "summary": f"agg {obj_type}: {len(data)} rows", "data": data}
+        data = result["data"]
+        lines = [f"聚合结果（{len(data)} 行）："]
+        for row in data[:20]:
+            lines.append("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
+        if len(data) > 20:
+            lines.append(f"  ...及其他 {len(data) - 20} 行")
+        return {"content": "\n".join(lines), "summary": f"agg {obj_type}: {len(data)} rows", "data": data}
+    return handler
 
 
 def _schema_aggregate_objects(relevant_types: list[str]) -> dict:
@@ -353,38 +376,43 @@ def _schema_aggregate_objects(relevant_types: list[str]) -> dict:
 # 工具 8: exclude_objects
 # ============================================================
 
-def _handle_exclude_objects(inp: dict) -> dict:
-    obj_type = TYPE_ALIASES.get(inp.get("object_type", ""), inp.get("object_type", ""))
-    exclude_link = inp.get("exclude_link", "")
-    exclude_target_type = TYPE_ALIASES.get(inp.get("exclude_target_type", ""), inp.get("exclude_target_type", ""))
-    exclude_target_filters = inp.get("exclude_target_filters")
-    if exclude_target_filters:
-        exclude_target_filters = normalize_filters(exclude_target_filters)
-    base_filters = inp.get("base_filters")
-    if base_filters:
-        base_filters = normalize_filters(base_filters)
-    limit = min(inp.get("limit", 50), 100)
+def _make_exclude_objects(config: OntologyConfig):
+    def handler(inp: dict) -> dict:
+        aliases = config.type_aliases or {}
+        obj_type = aliases.get(inp.get("object_type", ""), inp.get("object_type", ""))
+        exclude_link = inp.get("exclude_link", "")
+        raw_target = inp.get("exclude_target_type", "")
+        exclude_target_type = aliases.get(raw_target, raw_target)
+        exclude_target_filters = inp.get("exclude_target_filters")
+        if exclude_target_filters:
+            exclude_target_filters = normalize_filters(exclude_target_filters, config.value_aliases or None)
+        base_filters = inp.get("base_filters")
+        if base_filters:
+            base_filters = normalize_filters(base_filters, config.value_aliases or None)
+        limit = min(inp.get("limit", 50), 100)
 
-    results = exclude_objects(
-        obj_type,
-        exclude_link=exclude_link,
-        exclude_target_type=exclude_target_type,
-        exclude_target_filters=exclude_target_filters,
-        base_filters=base_filters,
-        limit=limit,
-    )
-    if not results:
-        return {"content": f"没有找到满足排除条件的 {obj_type} 对象", "summary": f"exclude empty {obj_type}", "data": []}
+        results = exclude_objects(
+            obj_type,
+            exclude_link=exclude_link,
+            exclude_target_type=exclude_target_type,
+            exclude_target_filters=exclude_target_filters,
+            base_filters=base_filters,
+            limit=limit,
+        )
+        if not results:
+            return {"content": f"没有找到满足排除条件的 {obj_type} 对象", "summary": f"exclude empty {obj_type}", "data": []}
 
-    enrich_score_context(results)
-    lines = [f"排除后找到 {len(results)} 个 {obj_type} 对象："]
-    for obj in results[:15]:
-        obj_name = obj.get("name", "")
-        parts = [f"{k}={v}" for k, v in obj.items() if not k.startswith("_") and k != "name"]
-        pk = obj.get("_id") or obj.get("Sno") or obj.get("Tno") or obj.get("Cno") or obj.get("id", "?")
-        lbl = obj_name if obj_name else f"{obj_type}#{pk}"
-        lines.append(f"  {obj_type}#{pk} '{lbl}': {', '.join(parts[:8])}")
-    return {"content": "\n".join(lines), "summary": f"exclude {obj_type}: {len(results)} results", "data": results}
+        if config.result_enricher:
+            config.result_enricher(results)
+        lines = [f"排除后找到 {len(results)} 个 {obj_type} 对象："]
+        for obj in results[:15]:
+            obj_name = obj.get("name", "")
+            parts = [f"{k}={v}" for k, v in obj.items() if not k.startswith("_") and k != "name"]
+            pk = obj.get("_id") or obj.get("Sno") or obj.get("Tno") or obj.get("Cno") or obj.get("id", "?")
+            lbl = obj_name if obj_name else f"{obj_type}#{pk}"
+            lines.append(f"  {obj_type}#{pk} '{lbl}': {', '.join(parts[:8])}")
+        return {"content": "\n".join(lines), "summary": f"exclude {obj_type}: {len(results)} results", "data": results}
+    return handler
 
 
 def _schema_exclude_objects(relevant_types: list[str]) -> dict:
@@ -423,13 +451,13 @@ def _schema_exclude_objects(relevant_types: list[str]) -> dict:
 # 统一注册入口
 # ============================================================
 
-def register_all_system_tools(registry: "ToolRegistry") -> None:
-    """按原有顺序注册全部系统工具。"""
-    registry.register_system("infer_relevant_types",        _handle_infer_relevant_types,        _schema_infer_relevant_types)
-    registry.register_system("describe_object_capabilities", _handle_describe_object_capabilities, _schema_describe_object_capabilities)
-    registry.register_system("query_objects",               _handle_query_objects,               _schema_query_objects)
-    registry.register_system("query_object_set",            _handle_query_object_set,            _schema_query_object_set)
-    registry.register_system("get_object_detail",           _handle_get_object_detail,           _schema_get_object_detail)
-    registry.register_system("execute_action",              _handle_execute_action,              _schema_execute_action)
-    registry.register_system("aggregate_objects",           _handle_aggregate_objects,           _schema_aggregate_objects)
-    registry.register_system("exclude_objects",             _handle_exclude_objects,             _schema_exclude_objects)
+def register_all_system_tools(registry: "ToolRegistry", config: OntologyConfig = DEFAULT_CONFIG) -> None:
+    """按原有顺序注册全部系统工具。config 传入领域专属配置，框架不包含领域知识。"""
+    registry.register_system("infer_relevant_types",        _make_infer_relevant_types(config),        _schema_infer_relevant_types)
+    registry.register_system("describe_object_capabilities", _make_describe_object_capabilities(config), _schema_describe_object_capabilities)
+    registry.register_system("query_objects",               _make_query_objects(config),               _schema_query_objects)
+    registry.register_system("query_object_set",            _handle_query_object_set,                  _schema_query_object_set)
+    registry.register_system("get_object_detail",           _make_get_object_detail(config),           _schema_get_object_detail)
+    registry.register_system("execute_action",              _make_execute_action(config),              _schema_execute_action)
+    registry.register_system("aggregate_objects",           _make_aggregate_objects(config),           _schema_aggregate_objects)
+    registry.register_system("exclude_objects",             _make_exclude_objects(config),             _schema_exclude_objects)

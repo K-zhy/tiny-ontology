@@ -1,46 +1,48 @@
 """OAG 元能力：对象推断、能力描述、System Prompt 构建。
 
-这里的函数是 Pipeline 的前两个阶段（infer_types / discover_capabilities），
-以及构建 LLM 上下文所需的格式化工具。
+所有函数均不包含领域知识，领域专属配置通过 OntologyConfig 传入。
 """
 from __future__ import annotations
-import re
 
 from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, FUNCTIONS, INTERFACES, OBJECT_SETS
-from .utils import TYPE_ALIASES
-
-# ---- 可扩展的推断关键词 ----
-# 默认从 registry 的 display_name/api_name 派生，也可注入领域专用词。
-# 更换 OBJECT_TYPES 后只需更新此字典（或清空让 registry 自动派生）。
-EXTRA_TYPE_KEYWORDS: dict[str, list[str]] = {
-    "Student": ["学生", "同学", "平均分", "avgscore", "学号"],
-    "Teacher": ["老师", "教师", "讲师", "教授", "任课"],
-    "Course":  ["课程", "科目", "学分", "通过率", "passrate"],
-    "Score":   ["成绩", "分数", "考试", "不及格", "挂科", "高分", "低分"],
-}
 
 
-def infer_relevant_types(query_text: str) -> list[str]:
+def infer_relevant_types(
+    query_text: str,
+    type_aliases: dict[str, str] | None = None,
+    extra_type_keywords: dict[str, list[str]] | None = None,
+    type_expansion_rules: dict[str, list[str]] | None = None,
+) -> list[str]:
     """从查询文本推断涉及的对象类型。
 
-    关键词来源：
-    1. registry 中每个 ObjectType 的 display_name + api_name（自动适应新对象定义）
-    2. EXTRA_TYPE_KEYWORDS 中可配置的额外关键词
+    关键词来源（按优先级）：
+    1. registry 中每个 ObjectType 的 api_name + display_name（平台自动派生）
+    2. extra_type_keywords 中可配置的额外关键词
+
+    type_expansion_rules: 类型关联规则，如 {"Score": ["Student", "Course"]}
+    type_aliases: 中文别称 -> api_name，如 {"学生": "Student"}
     """
     q = query_text.lower()
+    aliases = type_aliases or {}
+    extras = extra_type_keywords or {}
+    expansion = type_expansion_rules or {}
     matched: set[str] = set()
 
     for type_name, obj_def in OBJECT_TYPES.items():
         registry_kws = [type_name.lower(), obj_def.display_name.lower()]
-        extra_kws = EXTRA_TYPE_KEYWORDS.get(type_name, [])
+        extra_kws = [kw.lower() for kw in extras.get(type_name, [])]
         if any(kw in q for kw in registry_kws + extra_kws):
             matched.add(type_name)
 
-    # Score 查询通常需要 Student 和 Course 的名称富化
-    if "Score" in matched:
-        matched.update(["Student", "Course"])
-    if re.search(r'[\u4e00-\u9fff]{2,3}(?:的|同学|学生)', query_text):
-        matched.add("Student")
+    # 中文别名匹配
+    for alias, canonical in aliases.items():
+        if alias.lower() in q and canonical in OBJECT_TYPES:
+            matched.add(canonical)
+
+    # 类型关联扩展（领域专属的隐式依赖）
+    for src, targets in expansion.items():
+        if src in matched:
+            matched.update(targets)
 
     result = [t for t in OBJECT_TYPES.keys() if t in matched]
     return result if result else list(OBJECT_TYPES.keys())
@@ -48,26 +50,29 @@ def infer_relevant_types(query_text: str) -> list[str]:
 
 def get_relevant_object_sets(object_types: list[str]) -> dict[str, list]:
     """返回当前对象类型上定义的 ObjectSet，按对象类型分组。"""
-    normalized = _normalize_types(object_types)
-    relevant: dict[str, list] = {t: [] for t in normalized}
+    relevant: dict[str, list] = {t: [] for t in object_types}
     for obj_set in OBJECT_SETS.values():
         if obj_set.object_type in relevant:
             relevant[obj_set.object_type].append(obj_set)
     return relevant
 
 
-def _normalize_types(object_types: list[str]) -> list[str]:
+def _normalize_types(object_types: list[str], type_aliases: dict[str, str] | None = None) -> list[str]:
+    aliases = type_aliases or {}
     result: list[str] = []
     for t in object_types:
-        mapped = TYPE_ALIASES.get(t, t)
+        mapped = aliases.get(t, t)
         if mapped in OBJECT_TYPES and mapped not in result:
             result.append(mapped)
     return result
 
 
-def build_object_capability_data(object_types: list[str]) -> dict:
-    """构建对象的属性、Link、ObjectSet、函数能力描述，供 bootstrap 消息和前端展示使用。"""
-    normalized = _normalize_types(object_types)
+def build_object_capability_data(
+    object_types: list[str],
+    type_aliases: dict[str, str] | None = None,
+) -> dict:
+    """构建对象的属性、Link、ObjectSet、函数能力描述。完全通用，不包含领域知识。"""
+    normalized = _normalize_types(object_types, type_aliases)
     relevant_object_sets = get_relevant_object_sets(normalized)
 
     object_caps = []
@@ -127,7 +132,7 @@ def build_object_capability_data(object_types: list[str]) -> dict:
             "objectSets": object_sets, "functions": functions,
         })
 
-    # 系统工具列表（用于 bootstrap 消息中的 "## 当前系统工具" 块）
+    # 系统工具列表
     system_tools = [
         {"name": "infer_relevant_types",        "purpose": "推断当前问题涉及哪些对象类型"},
         {"name": "describe_object_capabilities", "purpose": "列出当前对象的属性、Link、ObjectSet 和绑定函数"},
@@ -173,33 +178,51 @@ def build_object_capability_data(object_types: list[str]) -> dict:
     }
 
 
-def build_system_prompt(relevant_types: list[str] | None = None) -> str:  # noqa: ARG001
-    """构建 OAG 模式的 System Prompt。当前为固定模板，可在子类中覆盖实现个性化提示词。"""
-    return (
-        '你是一个 Ontology 对象查询助手。系统采用"对象推断 -> 对象能力发现 -> 查询执行"的流程。\n\n'
-        "## 工作流程\n"
-        "1. 如果需要确认问题涉及哪些对象，先调用 infer_relevant_types。\n"
-        "2. 在使用任何字段前，优先依据当前上下文中的对象能力信息；如果仍不确定，再调用 describe_object_capabilities。\n"
-        "3. 完成对象能力确认后，再调用 query_objects、query_object_set、get_object_detail、aggregate_objects、exclude_objects 或 execute_action。\n"
-        "4. 对象绑定函数通过 fn_* 工具直接调用，只对当前问题涉及的对象开放。\n\n"
-        "## 核心约束\n"
-        "1. 系统工具中的业务字段必须使用对象属性名，不要使用数据库列名，也不要使用中文属性别名。\n"
-        "2. 跨 Link 查询只使用对象能力信息中列出的 path token，例如 student.name、course.name、scores.scoreValue。\n"
-        "3. Score 查询结果会自动补充 studentName、courseName、teacherName，不要再重复查询 Student 或 Course 只为拿名称。\n"
-        "4. get_object_detail 需要对象主键；如果只有对象名称，先用 query_objects 找到对象，再取主键。\n"
-        "5. 如果字段或路径不确定，先重新查看当前对象能力，不要猜测不存在的属性。\n\n"
-        "## 输出要求\n"
-        "- 严格按以下格式输出：第一行 `结论：...`，第二行 `分析：...`\n"
-        "- 必须先给结论，再给简要分析过程\n"
-        "- `结论` 只写最终答案，不铺垫，不解释工具调用\n"
-        "- `分析` 只保留最关键的 1 到 2 个依据，简短说明即可\n"
-        "- 如果结果并列，直接在 `结论` 中点名并列对象；如果没找到，直接写没找到\n\n"
-        "## 规则\n"
-        '- "低于/小于/不超过 N" 用 {"op":"lt","value":N} 或 {"op":"lte","value":N}\n'
-        '- "高于/大于/超过 N" 用 {"op":"gt","value":N} 或 {"op":"gte","value":N}\n'
-        '- "超过X"=严格大于(gt)；"不低于X"=大于等于(gte)；"达到X"=大于等于(gte)\n'
-        "- 找最好/最差/最高/最低时优先使用 order_by + order_dir + limit=1\n"
-        "- $or 仅用于同一对象的直接属性条件；跨不同 Link 路径的 OR 需要拆成多次 query_objects\n"
-        "- 否定查询（没有 / 不存在 / 未修读）优先用 exclude_objects\n"
-        "- 找不到就说没找到，不编造数据"
-    )
+# ---- System Prompt ----
+# 框架只提供通用骨架，具体的输出格式和查询规则由 OntologyConfig.system_prompt_addendum 注入。
+
+_BASE_SYSTEM_PROMPT = """\
+你是一个 Ontology 对象查询助手。系统采用"对象推断 -> 对象能力发现 -> 查询执行"的流程。
+
+## 工作流程
+1. 如果需要确认问题涉及哪些对象，先调用 infer_relevant_types。
+2. 在使用任何字段前，优先依据当前上下文中的对象能力信息；如果仍不确定，再调用 describe_object_capabilities。
+3. 完成对象能力确认后，再调用 query_objects、query_object_set、get_object_detail、aggregate_objects、exclude_objects 或 execute_action。
+4. 对象绑定函数通过 fn_* 工具直接调用，只对当前问题涉及的对象开放。
+
+## 核心约束
+1. 系统工具中的业务字段必须使用对象属性名，不要使用数据库列名，也不要使用中文属性别名。
+2. 跨 Link 查询只使用对象能力信息中列出的 path token。
+3. get_object_detail 需要对象主键；如果只有对象名称，先用 query_objects 找到对象，再取主键。
+4. 如果字段或路径不确定，先重新查看当前对象能力，不要猜测不存在的属性。
+
+## 输出要求
+- 严格按以下格式输出：第一行 `结论：...`，第二行 `分析：...`
+- 必须先给结论，再给简要分析过程
+- `结论` 只写最终答案，不铺垫，不解释工具调用
+- `分析` 只保留最关键的 1 到 2 个依据，简短说明即可
+- 如果结果并列，直接在 `结论` 中点名并列对象；如果没找到，直接写没找到
+
+## 规则
+- "低于/小于/不超过 N" 用 {"op":"lt","value":N} 或 {"op":"lte","value":N}
+- "高于/大于/超过 N" 用 {"op":"gt","value":N} 或 {"op":"gte","value":N}
+- "超过X"=严格大于(gt)；"不低于X"=大于等于(gte)；"达到X"=大于等于(gte)
+- 找最好/最差/最高/最低时优先使用 order_by + order_dir + limit=1
+- $or 仅用于同一对象的直接属性条件；跨不同 Link 路径的 OR 需要拆成多次 query_objects
+- 否定查询（没有 / 不存在 / 未修读）优先用 exclude_objects
+- 找不到就说没找到，不编造数据"""
+
+
+def build_system_prompt(
+    relevant_types: list[str] | None = None,
+    system_prompt_addendum: str = "",
+) -> str:
+    """构建 System Prompt = 通用骨架 + 领域补充说明。
+
+    system_prompt_addendum 由 OntologyConfig 提供，用于注入领域专属约束。
+    不传则只有通用规则。
+    """
+    prompt = _BASE_SYSTEM_PROMPT
+    if system_prompt_addendum:
+        prompt += "\n\n" + system_prompt_addendum
+    return prompt

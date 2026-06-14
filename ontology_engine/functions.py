@@ -1,21 +1,50 @@
 """
-Function 引擎 — 执行 Ontology Function（SQL 实现的计算逻辑）。
-所有 Function 内部用 SQL 实现，对外暴露为业务语义的派生属性或查询接口。
+Function 引擎 — 执行 Ontology Function。
+所有 Function 定义在 registry 中，默认按 sql_template 执行。
+需要自定义逻辑的 Function 可通过 register_function_handler 注入。
 """
 
-from typing import Optional
+from typing import Optional, Callable
 from ontology_engine.database import get_connection
 from ontology_engine.registry import FUNCTIONS
 
+# ---- 自定义 Handler 注册表 ----
+# func_name -> handler(params: dict) -> dict
+_FUNCTION_HANDLERS: dict[str, Callable] = {}
+
+
+def register_function_handler(func_name: str, handler: Callable) -> None:
+    """注册自定义 Function 执行逻辑。
+
+    handler 签名: (params: dict) -> dict
+    返回 {"success": True, "data": ...} 或 {"success": False, "error": ...}
+    注册后该 Function 不再走默认的 sql_template 执行路径。
+    """
+    _FUNCTION_HANDLERS[func_name] = handler
+
 
 def call_function(func_name: str, params: Optional[dict] = None) -> dict:
-    """调用一个 Function"""
+    """调用一个 Function。
+
+    执行优先级：
+    1. 如果有注册的自定义 handler → 直接调用
+    2. 否则按 func_def.sql_template 执行 SQL
+    """
     params = params or {}
     func_def = FUNCTIONS.get(func_name)
     if not func_def:
         return {"success": False, "error": f"Unknown function: {func_name}"}
 
-    # 填充参数（位置参数按定义顺序）
+    # 优先使用自定义 handler
+    custom_handler = _FUNCTION_HANDLERS.get(func_name)
+    if custom_handler:
+        return custom_handler(params)
+
+    # 默认路径：按 sql_template 执行
+    if not func_def.sql_template or not func_def.sql_template.strip():
+        return {"success": False, "error": f"Function '{func_name}' has no sql_template and no custom handler"}
+
+    # 填充参数（按定义顺序）
     sql_params = []
     for p in func_def.params:
         val = params.get(p.name)
@@ -25,44 +54,19 @@ def call_function(func_name: str, params: Optional[dict] = None) -> dict:
 
     conn = get_connection()
     try:
-        if func_def.func_type == "validation":
-            return _run_validation(func_name, params)
-
         if func_def.func_type == "object_set":
-            # 批量 Function：返回多行结果
-            if func_name == "getTopStudents" and sql_params[1] is None:
-                sql_params[1] = 10
-            if func_name == "searchByName":
-                # searchByName SQL 有三个 ? (每 UNION 一个)，用同一个 keyword
-                kw = sql_params[0] if sql_params[0] else ""
-                sql_params = [kw, kw, kw]
+            # 批量 Function：返回多行
             rows = conn.execute(func_def.sql_template.strip(), sql_params).fetchall()
             results = [dict(row) for row in rows]
             conn.close()
             return {"success": True, "data": results}
 
-        if func_name == "getScoreSummary":
-            obj_type = params.get("objectType", "")
-            obj_id = params.get("objectId")
-            if obj_type == "Student":
-                row = conn.execute(
-                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE Sno = ?",
-                    (obj_id,)
-                ).fetchone()
-            elif obj_type == "Course":
-                row = conn.execute(
-                    "SELECT MAX(score_value) as max_score, MIN(score_value) as min_score, ROUND(AVG(score_value),1) as avg_score, COUNT(*) as count FROM score WHERE Cno = ?",
-                    (obj_id,)
-                ).fetchone()
-            else:
-                conn.close()
-                return {"success": False, "error": f"Unknown object type for Scoreable: {obj_type}"}
+        if func_def.func_type == "validation":
             conn.close()
-            if row:
-                return {"success": True, "data": dict(row)}
-            return {"success": True, "data": {"max_score": None, "min_score": None, "avg_score": None, "count": 0}}
+            # validation 类型没有自定义 handler 时返回通过
+            return {"success": True, "data": {"valid": True, "message": "ok"}}
 
-        # 标量 Function（getAvgScore, getPassRate, getCourseAvgScore）
+        # 标量 Function（getAvgScore, getCourseAvgScore, getPassRate 等）
         row = conn.execute(func_def.sql_template.strip(), sql_params).fetchone()
         conn.close()
         val = row[0] if row else None
@@ -72,8 +76,8 @@ def call_function(func_name: str, params: Optional[dict] = None) -> dict:
         return {"success": False, "error": str(e)}
 
 
-def compute_derived_property(object_type: str, object_id: int, prop_name: str):
-    """计算单个对象的派生属性"""
+def compute_derived_property(object_type: str, object_id, prop_name: str):
+    """计算单个对象的派生属性。"""
     for func_def in FUNCTIONS.values():
         if (func_def.is_derived_property == prop_name
                 and func_def.bound_object == object_type):
@@ -82,30 +86,3 @@ def compute_derived_property(object_type: str, object_id: int, prop_name: str):
             if result.get("success"):
                 return result["data"]
     return None
-
-
-def _run_validation(func_name: str, params: dict) -> dict:
-    """校验 Function 的独立调用"""
-    if func_name == "validateScore":
-        student_sno = params.get("studentSno")
-        course_cno = params.get("courseCno")
-        score_value = params.get("scoreValue")
-
-        errors = []
-        if score_value is not None and (score_value < 0 or score_value > 100):
-            errors.append("成绩必须在 0-100 之间")
-
-        conn = get_connection()
-        row = conn.execute(
-            "SELECT id FROM score WHERE Sno = ? AND Cno = ?",
-            (student_sno, course_cno)
-        ).fetchone()
-        conn.close()
-        if row:
-            errors.append(f"该学生已在该课程有成绩记录(id={row['id']})")
-
-        if errors:
-            return {"success": True, "data": {"valid": False, "message": "; ".join(errors)}}
-        return {"success": True, "data": {"valid": True, "message": "校验通过"}}
-
-    return {"success": True, "data": {"valid": True, "message": "ok"}}

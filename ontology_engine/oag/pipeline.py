@@ -15,6 +15,7 @@ from typing import Callable
 from .context import QueryContext
 from .tool_registry import ToolRegistry
 from .capabilities import infer_relevant_types, build_object_capability_data, build_system_prompt
+from .config import OntologyConfig, DEFAULT_CONFIG
 
 
 # ---- 答案格式化 ----
@@ -67,42 +68,51 @@ class OAGPipeline:
         registry: ToolRegistry,
         llm_fn: Callable,
         max_tokens: int = 2048,
+        config: OntologyConfig = DEFAULT_CONFIG,
     ) -> None:
         self.registry = registry
         self.llm_fn = llm_fn
         self.max_tokens = max_tokens
+        self.config = config
 
     # ---- 可覆盖的阶段方法（Template Method） ----
 
     def infer_types(self, ctx: QueryContext) -> None:
         """阶段 1：对象推断。默认使用关键词匹配；子类可覆盖为 LLM 推断。"""
-        result = self.registry.execute("infer_relevant_types", {"query": ctx.query_text})
-        ctx.relevant_types = result.get("data", {}).get("relevant_types", [])
+        ctx.relevant_types = infer_relevant_types(
+            ctx.query_text,
+            type_aliases=self.config.type_aliases or None,
+            extra_type_keywords=self.config.extra_type_keywords or None,
+            type_expansion_rules=self.config.type_expansion_rules or None,
+        )
         ctx.exploration_log.append({
             "step": 0,
             "tool": "infer_relevant_types",
             "input": {"query": ctx.query_text},
-            "summary": result["summary"],
-            "result_data": result.get("data"),
-            "result_content": result.get("content"),
+            "summary": f"relevant types: {', '.join(ctx.relevant_types)}",
+            "result_data": {"relevant_types": ctx.relevant_types},
+            "result_content": "推断相关对象类型：" + "、".join(ctx.relevant_types),
         })
 
     def discover_capabilities(self, ctx: QueryContext) -> None:
         """阶段 2：能力发现。默认从 registry 同步构建；子类可覆盖为缓存或远程加载。"""
-        result = self.registry.execute("describe_object_capabilities", {"object_types": ctx.relevant_types})
-        ctx.capability = result.get("data", {})
+        cap = build_object_capability_data(ctx.relevant_types, type_aliases=self.config.type_aliases or None)
+        ctx.capability = cap
         ctx.exploration_log.append({
             "step": 0,
             "tool": "describe_object_capabilities",
             "input": {"object_types": ctx.relevant_types},
-            "summary": result["summary"],
-            "result_data": result.get("data"),
-            "result_content": result.get("content"),
+            "summary": f"described {len(cap.get('object_types', []))} object types",
+            "result_data": cap,
+            "result_content": cap.get("summary_text", ""),
         })
 
     def build_bootstrap(self, ctx: QueryContext) -> None:
         """阶段 3：构建首条消息和 tool_schemas。子类可覆盖以定制 Prompt 或工具集。"""
-        ctx.system_prompt = build_system_prompt(ctx.relevant_types)
+        ctx.system_prompt = build_system_prompt(
+            ctx.relevant_types,
+            system_prompt_addendum=self.config.system_prompt_addendum,
+        )
         ctx.tool_schemas = self.registry.get_all_schemas(ctx.relevant_types)
 
         capability_text = ctx.capability.get("summary_text", "")

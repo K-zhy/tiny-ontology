@@ -1,13 +1,13 @@
 """
-OAG（Ontology Augmented Generation）模式 NL 查询 — 入口层
-======================================================
-职责：
-  1. 创建默认 ToolRegistry（系统工具 + 对象函数）并组装 OAGPipeline
-  2. 暴露 handle_oag_query() 给 server.py 调用
-  3. 持久化对话历史（conversation_logs/）
-  4. 提供 list_conversations / get_conversation 给 REST 路由
+OAG 问答入口 — Demo 项目的自然语言查询实现
+============================================
+此文件是 server.py 调用的 OAG 入口，属于 demo 项目的一部分。
 
-业务逻辑、工具分发、流程骨架均已迁移至 ontology_engine/oag/ 子包。
+职责：
+    1. 引用 demo/config.py 中的领域配置
+    2. 组装 ToolRegistry + OAGPipeline
+    3. 暴露 handle_oag_query() / list_conversations() / get_conversation()
+    4. 持久化对话历史
 """
 
 from __future__ import annotations
@@ -17,29 +17,32 @@ import uuid
 from datetime import datetime
 
 from llm_client import chat_completion
+
+from demo.config import DEMO_OAG_CONFIG
 from ontology_engine.oag.tool_registry import ToolRegistry
 from ontology_engine.oag.system_tools import register_all_system_tools
 from ontology_engine.oag.object_tools import register_all_object_tools
 from ontology_engine.oag.pipeline import OAGPipeline
 
-# ---- 默认 Pipeline 工厂 ----
 
-def _create_default_pipeline() -> OAGPipeline:
-    """创建并返回注册好所有工具的默认 OAGPipeline。"""
+# ---- Pipeline 工厂 ----
+
+def _create_pipeline() -> OAGPipeline:
+    """按 demo 领域配置组装 Pipeline。"""
     registry = ToolRegistry()
-    register_all_system_tools(registry)
+    register_all_system_tools(registry, config=DEMO_OAG_CONFIG)
     register_all_object_tools(registry)
-    return OAGPipeline(registry, chat_completion)
+    return OAGPipeline(registry, chat_completion, config=DEMO_OAG_CONFIG)
 
 
 # ---- 主入口函数（由 server.py 调用）----
 
 async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
     """OAG 模式问答入口：组装 Pipeline，执行查询，持久化对话。"""
-    pipeline = _create_default_pipeline()
+    pipeline = _create_pipeline()
     result = await pipeline.run(query_text, max_iterations=max_iterations)
 
-    # 从 ctx 提取完整对话信息后持久化
+    # 持久化对话历史
     ctx = result.pop("_ctx", None)
     if ctx is not None:
         _save_conversation(
@@ -57,8 +60,6 @@ async def handle_oag_query(query_text: str, max_iterations: int = 20) -> dict:
 # ---- 对话历史持久化 ----
 
 _CONV_DIR = os.path.join(os.path.dirname(__file__), "conversation_logs")
-
-
 
 
 def _save_conversation(
@@ -121,11 +122,3 @@ def get_conversation(conv_id: str) -> dict | None:
         return None
     with open(path, encoding="utf-8") as f:
         return json.load(f)
-
-
-
-
-if __name__ == "__main__":
-    import asyncio
-    result = asyncio.run(handle_oag_query("王教授教授哪些课程？"))
-    print(result["answer"])
