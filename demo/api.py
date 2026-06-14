@@ -58,8 +58,8 @@ def get_schema():
             "displayName": link_def.display_name,
             "sourceType": link_def.source_type,
             "targetType": link_def.target_type,
-            "cardinality": link_def.cardinality,
             "reverseName": link_def.reverse_name,
+            "sourceFk": link_def.source_fk,
         }
 
     actions = {}
@@ -291,32 +291,23 @@ def api_graph_data():
 
     for link_def in registry.LINK_TYPES.values():
         source_def = registry.OBJECT_TYPES[link_def.source_type]
-        source_pk = link_def.source_pk or next(
+        source_pk = next(
             prop.column for prop in source_def.properties if prop.prop_type == "primary_key"
         )
         conn = get_connection()
-        if link_def.cardinality == "many_to_many":
-            rows = conn.execute(
-                f"SELECT {link_def.bridge_source_fk}, {link_def.bridge_target_fk} FROM {link_def.bridge_table}"
-            ).fetchall()
-        else:
-            rows = conn.execute(f"SELECT {source_pk}, {link_def.source_fk} FROM {source_def.table}").fetchall()
+        rows = conn.execute(f"SELECT {source_pk}, {link_def.source_fk} FROM {source_def.table}").fetchall()
         conn.close()
 
         for row in rows:
-            if link_def.cardinality == "many_to_many":
-                source_id = row[link_def.bridge_source_fk]
-                target_id = row[link_def.bridge_target_fk]
-            else:
-                source_id = row[source_pk]
-                target_id = row[link_def.source_fk]
+            source_id = row[source_pk]
+            target_id = row[link_def.source_fk]
             if target_id:
                 edges.append({
                     "from": f"{link_def.source_type}-{source_id}",
                     "to": f"{link_def.target_type}-{target_id}",
                     "label": link_def.api_name,
                     "displayLabel": link_def.display_name,
-                    "title": f"{link_def.display_name} ({link_def.cardinality})",
+                    "title": f"{link_def.display_name}",
                 })
 
     return {"nodes": nodes, "edges": edges}
@@ -349,19 +340,14 @@ def api_schema_graph():
         })
 
     for name, link_def in registry.LINK_TYPES.items():
-        edge_detail = (
-            f"桥表: {link_def.bridge_table} ({link_def.bridge_source_fk}, {link_def.bridge_target_fk})"
-            if link_def.cardinality == "many_to_many"
-            else f"外键: {link_def.source_type}.{link_def.source_fk} -> {link_def.target_type}.{link_def.target_pk or 'PK'}"
-        )
+        edge_detail = f"外键: {link_def.source_type}.{link_def.source_fk} -> {link_def.target_type}.PK"
         edges.append({
             "from": f"Type-{link_def.source_type}",
             "to": f"Type-{link_def.target_type}",
-            "label": f"{link_def.display_name}\n({link_def.api_name})\n[{link_def.cardinality}]",
+            "label": f"{link_def.display_name}\n({link_def.api_name})",
             "title": (
                 f"<b>{link_def.display_name} ({link_def.api_name})</b><br>"
                 f"{link_def.source_type} -> {link_def.target_type}<br>"
-                f"关系: {link_def.cardinality}<br>"
                 f"{edge_detail}"
             ),
             "arrows": "to",

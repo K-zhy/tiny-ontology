@@ -97,26 +97,8 @@ def _build_link_join_clause(link, direction: str, current_alias: str, new_alias:
                             join_kind: str = "JOIN") -> tuple[str, str]:
     source_def = OBJECT_TYPES[link.source_type]
     target_def = OBJECT_TYPES[link.target_type]
-    source_pk = link.source_pk or _get_primary_column(source_def)
-    target_pk = link.target_pk or _get_primary_column(target_def)
-
-    if link.cardinality == "many_to_many":
-        bridge_alias = f"{new_alias}_bridge"
-        if direction == "forward":
-            clause = (
-                f"{join_kind} {link.bridge_table} {bridge_alias} "
-                f"ON {current_alias}.{source_pk} = {bridge_alias}.{link.bridge_source_fk} "
-                f"{join_kind} {target_def.table} {new_alias} "
-                f"ON {bridge_alias}.{link.bridge_target_fk} = {new_alias}.{target_pk}"
-            )
-            return clause, link.target_type
-        clause = (
-            f"{join_kind} {link.bridge_table} {bridge_alias} "
-            f"ON {current_alias}.{target_pk} = {bridge_alias}.{link.bridge_target_fk} "
-            f"{join_kind} {source_def.table} {new_alias} "
-            f"ON {bridge_alias}.{link.bridge_source_fk} = {new_alias}.{source_pk}"
-        )
-        return clause, link.source_type
+    target_pk = _get_primary_column(target_def)
+    source_pk = _get_primary_column(source_def)
 
     if direction == "forward":
         clause = (
@@ -205,36 +187,24 @@ def query_objects(object_type: str, where: Optional[dict] = None,
 
 
 def traverse_link(object_type: str, object_id: int, link_name: str) -> list[dict]:
-    """沿 Link 遍历到关联对象。
-
-    支持正向和反向遍历：
-    - 正向：从持有 FK 的源对象遍历到目标对象
-    - 反向：从目标对象反查到所有引用它的源对象
-    """
+    """沿 Link 遍历到关联对象。支持正向和反向遍历。"""
     # 正向遍历：当前对象是 Link 的 source（持有 FK）
     link = LINK_TYPES.get(link_name)
     if link and link.source_type == object_type:
         source_def = OBJECT_TYPES[link.source_type]
         target_def = OBJECT_TYPES[link.target_type]
-        source_pk = link.source_pk or _get_primary_column(source_def)
+        source_pk = _get_primary_column(source_def)
+        target_pk = _get_primary_column(target_def)
         target_cols = [p.column for p in target_def.properties
                        if p.prop_type in ("primary_key", "regular")]
         cols_str = ", ".join(f"t.{c}" for c in target_cols)
 
-        if link.cardinality == "many_to_many":
-            sql = f"""
-                SELECT {cols_str}
-                FROM {target_def.table} t
-                JOIN {link.bridge_table} b ON b.{link.bridge_target_fk} = t.{link.target_pk or _get_primary_column(target_def)}
-                WHERE b.{link.bridge_source_fk} = ?
-            """
-        else:
-            sql = f"""
-                SELECT {cols_str}
-                FROM {target_def.table} t
-                JOIN {source_def.table} s ON s.{link.source_fk} = t.{link.target_pk or _get_primary_column(target_def)}
-                WHERE s.{source_pk} = ?
-            """
+        sql = f"""
+            SELECT {cols_str}
+            FROM {target_def.table} t
+            JOIN {source_def.table} s ON s.{link.source_fk} = t.{target_pk}
+            WHERE s.{source_pk} = ?
+        """
         conn = get_connection()
         rows = conn.execute(sql, (object_id,)).fetchall()
         conn.close()
@@ -246,25 +216,15 @@ def traverse_link(object_type: str, object_id: int, link_name: str) -> list[dict
                      if l.target_type == object_type and l.reverse_name == link_name), None)
     if rev_link:
         source_def = OBJECT_TYPES[rev_link.source_type]
-        target_def = OBJECT_TYPES[rev_link.target_type]
-        target_pk = rev_link.target_pk or _get_primary_column(target_def)
         source_cols = [p.column for p in source_def.properties
                        if p.prop_type in ("primary_key", "regular")]
         cols_str = ", ".join(f"s.{c}" for c in source_cols)
 
-        if rev_link.cardinality == "many_to_many":
-            sql = f"""
-                SELECT {cols_str}
-                FROM {source_def.table} s
-                JOIN {rev_link.bridge_table} b ON b.{rev_link.bridge_source_fk} = s.{rev_link.source_pk or _get_primary_column(source_def)}
-                WHERE b.{rev_link.bridge_target_fk} = ?
-            """
-        else:
-            sql = f"""
-                SELECT {cols_str}
-                FROM {source_def.table} s
-                WHERE s.{rev_link.source_fk} = ?
-            """
+        sql = f"""
+            SELECT {cols_str}
+            FROM {source_def.table} s
+            WHERE s.{rev_link.source_fk} = ?
+        """
         conn = get_connection()
         rows = conn.execute(sql, (object_id,)).fetchall()
         conn.close()
@@ -669,50 +629,21 @@ def exclude_objects(
 
     # 找到连接两者的 Link
     link = LINK_TYPES.get(exclude_link)
-    # 尝试正向/反向匹配
     join_condition = None
     if link and link.source_type == exclude_target_type and link.target_type == object_type:
-        if link.cardinality == "many_to_many":
-            join_condition = (
-                f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} IN ("
-                f"SELECT {link.bridge_target_fk} FROM {link.bridge_table} "
-                f"WHERE {link.bridge_source_fk} = main.{link.source_pk or _get_primary_column(object_type)})"
-            )
-        else:
-            join_condition = f"sub.{link.source_fk} = main.{link.target_pk or _get_primary_column(object_type)}"
+        join_condition = f"sub.{link.source_fk} = main.{_get_primary_column(object_type)}"
     elif link and link.source_type == object_type and link.target_type == exclude_target_type:
-        if link.cardinality == "many_to_many":
-            join_condition = (
-                f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} IN ("
-                f"SELECT {link.bridge_target_fk} FROM {link.bridge_table} "
-                f"WHERE {link.bridge_source_fk} = main.{link.source_pk or _get_primary_column(object_type)})"
-            )
-        else:
-            join_condition = f"sub.{link.target_pk or _get_primary_column(exclude_target_type)} = main.{link.source_fk}"
+        join_condition = f"sub.{_get_primary_column(exclude_target_type)} = main.{link.source_fk}"
     else:
         # 通过 reverse name 查找
         for l in LINK_TYPES.values():
             if l.reverse_name == exclude_link:
                 if l.source_type == exclude_target_type and l.target_type == object_type:
-                    if l.cardinality == "many_to_many":
-                        join_condition = (
-                            f"sub.{l.source_pk or _get_primary_column(exclude_target_type)} IN ("
-                            f"SELECT {l.bridge_source_fk} FROM {l.bridge_table} "
-                            f"WHERE {l.bridge_target_fk} = main.{l.target_pk or _get_primary_column(object_type)})"
-                        )
-                    else:
-                        join_condition = f"sub.{l.source_fk} = main.{l.target_pk or _get_primary_column(object_type)}"
+                    join_condition = f"sub.{l.source_fk} = main.{_get_primary_column(object_type)}"
                     link = l
                     break
                 elif l.source_type == object_type and l.target_type == exclude_target_type:
-                    if l.cardinality == "many_to_many":
-                        join_condition = (
-                            f"sub.{l.target_pk or _get_primary_column(exclude_target_type)} IN ("
-                            f"SELECT {l.bridge_target_fk} FROM {l.bridge_table} "
-                            f"WHERE {l.bridge_source_fk} = main.{l.source_pk or _get_primary_column(object_type)})"
-                        )
-                    else:
-                        join_condition = f"sub.{l.target_pk or _get_primary_column(exclude_target_type)} = main.{l.source_fk}"
+                    join_condition = f"sub.{_get_primary_column(exclude_target_type)} = main.{l.source_fk}"
                     link = l
                     break
 

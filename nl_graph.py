@@ -81,7 +81,7 @@ def build_system_prompt() -> str:
 
 ## 典型查询
 - "查XXX的成绩" → search_objects 找到学生 → traverse scores 或 call_function getAvgScore
-- "XXXX谁教" → 不涉及学期时可 search_objects 课程后 traverse taughtBy；若涉及学期/共同授课，优先 search_objects(TeachingAssignment)
+- "XXXX谁教" → search_objects(TeachingAssignment, filters={"course.name":"课程名"}) 后 traverse teacher；也可 search_objects 课程后 traverse teachingAssignments 再 traverse teacher
 - "搜索叫张三的" → search_objects(Student, filters={"name":"张三"}) 或 search_by_semantic("张三")
 - "有哪些类型的对象" → list_object_types
 

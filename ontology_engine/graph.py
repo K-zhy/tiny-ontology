@@ -13,11 +13,10 @@ from ontology_engine.registry import OBJECT_TYPES, LINK_TYPES, FUNCTIONS, ACTION
 @dataclass
 class GraphTraversal:
     """从节点可执行的一条遍历路径"""
-    name: str           # 传给 traverse() 的名称，如 "scores", "taughtBy"
-    display_name: str   # 给 LLM 看的，如 "成绩", "授课教师"
+    name: str           # 传给 traverse() 的名称，如 "scores"
+    display_name: str   # 给 LLM 看的，如 "成绩"
     target_type: str    # 目标 Object Type
     direction: str      # "forward" | "reverse"
-    cardinality: str    # "many_to_one" | "one_to_many"
 
 
 @dataclass
@@ -73,29 +72,9 @@ class OntologyGraph:
             # 2. 构建邻接边
             for link_name, link_def in LINK_TYPES.items():
                 source_def = OBJECT_TYPES[link_def.source_type]
-                target_def = OBJECT_TYPES[link_def.target_type]
-                source_pk = link_def.source_pk or next(
+                source_pk = next(
                     p.column for p in source_def.properties if p.prop_type == "primary_key"
                 )
-                target_pk = link_def.target_pk or next(
-                    p.column for p in target_def.properties if p.prop_type == "primary_key"
-                )
-
-                if link_def.cardinality == "many_to_many":
-                    rows = conn.execute(
-                        f"SELECT {link_def.bridge_source_fk}, {link_def.bridge_target_fk} FROM {link_def.bridge_table}"
-                    ).fetchall()
-                    for row in rows:
-                        source_key = f"{link_def.source_type}-{row[link_def.bridge_source_fk]}"
-                        target_key = f"{link_def.target_type}-{row[link_def.bridge_target_fk]}"
-                        if source_key not in self._nodes or target_key not in self._nodes:
-                            continue
-                        self._adj_out.setdefault(source_key, {}).setdefault(
-                            link_def.api_name, []).append(target_key)
-                        self._adj_out.setdefault(target_key, {}).setdefault(
-                            link_def.reverse_name, []).append(source_key)
-                    continue
-
                 rows = conn.execute(
                     f"SELECT {source_pk}, {link_def.source_fk} FROM {source_def.table}"
                 ).fetchall()
@@ -107,10 +86,8 @@ class OntologyGraph:
                     target_key = f"{link_def.target_type}-{target_id}"
                     if target_key not in self._nodes:
                         continue
-                    # 正向边: source → target
                     self._adj_out.setdefault(source_key, {}).setdefault(
                         link_def.api_name, []).append(target_key)
-                    # 反向边: target → source
                     self._adj_out.setdefault(target_key, {}).setdefault(
                         link_def.reverse_name, []).append(source_key)
         finally:
@@ -136,16 +113,13 @@ class OntologyGraph:
                     display_name=link.display_name,
                     target_type=link.target_type,
                     direction="forward",
-                    cardinality=link.cardinality,
                 ))
             if link.target_type == obj_type:
-                rev_card = "one_to_many" if link.cardinality == "many_to_one" else "many_to_one"
                 meta.traversals.append(GraphTraversal(
                     name=link.reverse_name,
                     display_name=f"反向{link.display_name}",
                     target_type=link.source_type,
                     direction="reverse",
-                    cardinality=rev_card,
                 ))
 
         # 绑定函数

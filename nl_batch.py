@@ -106,7 +106,7 @@ def build_batch_system_prompt() -> str:
 3. 如果用户想查平均分/通过率，query_objects 找到对象后 call_function
 4. 如果用户想录入/修改成绩，用 execute_action
 5. 只输出 JSON 数组，不要其他内容
-6. 对于学期、授课安排、共同授课问题，优先查询 TeachingAssignment；仅在不涉及学期时才直接用 Course → taughtBy
+6. 对于学期、授课安排、共同授课问题，查询 TeachingAssignment（通过 course.teacher.name 等跨 Link 过滤）
 7. 跨步骤引用格式：后续步骤需要前面步骤的返回值时，用 <RESULT[N].field>。N是步骤的数组索引（从0开始），field是字段名。
 8. 如果用户想跨类型搜索名字，用 searchByName(keyword)。如果用户想看某对象的成绩汇总，先 query_objects 再 call_function getScoreSummary(objectType, objectId)。
 9. TeachingAssignment 表示“某门课在某学期由某位老师授课”的业务事实，字段包括 semester、courseCno、teacherTno，可通过 course.name、teacher.name 跨 Link 过滤。"""
